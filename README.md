@@ -10,7 +10,7 @@
 
 ![A real Claude Code session on GNOME 50: Claude opens kernel.org in GNOME Web, reads the latest stable kernel, writes a note in Text Editor and saves it](assets/demo-gnome.gif)
 
-<sub>A real Claude Code session on GNOME 50, sped up while Claude thinks. [Watch the 1080p video](assets/demo-gnome.mp4).</sub>
+<sub>A real Claude Code session on GNOME 50, sped up while Claude thinks. [Download the 1080p MP4](https://github.com/StivenKN/linux-use/raw/main/assets/demo-gnome.mp4).</sub>
 
 Claude Code's built-in computer use is macOS-only. linux-use is a community plugin that brings the same tool surface to Linux. It isn't a fork or a patched Claude Code: it installs into your normal `claude` like any other plugin, and Claude uses it the way it uses computer use on a Mac.
 
@@ -52,7 +52,7 @@ Everything runs through Claude Code's normal tools, so Claude can mix them freel
 
 ![Claude Code over SSH on an Ubuntu server: it serves a landing page, opens it in Firefox on the headless agent desktop, sees the cut-off pricing card, fixes the CSS and reloads to check](assets/demo-server.gif)
 
-<sub>Claude Code over SSH on an Ubuntu server with no display, sped up while Claude thinks. [Watch the 1080p video](assets/demo-server.mp4).</sub>
+<sub>Claude Code over SSH on an Ubuntu server with no display, sped up while Claude thinks. [Download the 1080p MP4](https://github.com/StivenKN/linux-use/raw/main/assets/demo-server.mp4).</sub>
 
 In our test runs with Opus 5.5, tasks like these took 20 to 60 seconds and cost $0.19 to $0.28 each. A screenshot costs at most 1,568 tokens.
 
@@ -93,7 +93,9 @@ open vnc://localhost:5900                                  # macOS; any VNC view
 | **Agent desktop** (headless labwc) | ✓ | ✓ | ✓ | ✓ | `labwc wayvnc waybar swaybg foot xwayland` |
 
 ¹ Screenshots are read from Mutter's screen cast with linux-use's own PipeWire client: no prompt, no flash, no shutter sound, a few milliseconds each. While Claude is in control, GNOME shows its screen-sharing indicator. This needs PipeWire 1.0 or newer (Ubuntu 24.04, Fedora 40, Debian 13 and later). On older systems, or if PipeWire capture fails, linux-use falls back to the screenshot portal, which asks once and flashes on every capture. Text the keyboard layout can't type (emoji, accents, Cyrillic) is pasted, and your clipboard is restored afterwards.
+
 ² GNOME only lets its own components list windows, so linux-use ships a tiny GNOME Shell extension (GNOME 45 or newer) that lists and focuses them. `/linux-use:setup` explains it and installs it if you agree (`linux-use gnome-extension install`; `uninstall` removes it). It powers `list_windows` and `activate_window`, lets `open_application` bring a running app to the front, and shows linux-use which app is in front, so input to apps you didn't grant and typing into terminals are refused like everywhere else. GNOME only loads new extensions at login, so log out and back in once after installing. Without it, Claude works through `open_application` and screenshots, and the `request_access` grant is the only check.
+
 ³ On first use, linux-use writes a hidden `~/.local/share/applications/linux-use.desktop`. That's how KWin grants a program its screenshot and input interfaces, so there's no prompt.
 
 The binary speaks every protocol itself (Wayland, X11, D-Bus and PipeWire), so there's no `grim`, `wtype`, `xdotool`, `ydotool` or GStreamer to install. Typing works with any keyboard layout, and emoji, accents and CJK are typed as-is.
