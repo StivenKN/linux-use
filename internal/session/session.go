@@ -75,6 +75,9 @@ func (s Session) Env() []string {
 			"ELECTRON_OZONE_PLATFORM_HINT=auto",
 			"QT_QPA_PLATFORM=wayland;xcb",
 			"SDL_VIDEODRIVER=wayland,x11",
+			// Stopping the desktop kills apps with it; don't greet the next
+			// session with crash-report dialogs.
+			"MOZ_CRASHREPORTER_DISABLE=1",
 		)
 	}
 	return env

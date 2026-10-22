@@ -112,7 +112,7 @@ make test                      # on Linux
 | Package | |
 | --- | --- |
 | `internal/wl` | dependency-free Wayland client: wire protocol, shm, screencopy, virtual input, toplevels, data-control, output management |
-| `internal/desktop/*` | one backend per graphical stack (`wlr`, `x11`, …) behind a small `Backend` interface |
+| `internal/desktop/*` | one backend per graphical stack (`wlr`, `gnome`, `kde`, `x11`) behind a small `Backend` interface |
 | `internal/session` | finds the session to drive and runs the agent desktop |
 | `internal/computer` | coordinate mapping, screenshot sizing, chords, drags, app launching, the session lock |
 | `internal/mcpserver` | the MCP tool surface, access grants and tiers |

@@ -161,6 +161,7 @@ func Up(opts Options) (Session, error) {
 		"LINUX_USE_CONFIG":             cfg,
 		"PATH":                         os.Getenv("PATH"),
 		"MOZ_ENABLE_WAYLAND":           "1",
+		"MOZ_CRASHREPORTER_DISABLE":    "1",
 		"ELECTRON_OZONE_PLATFORM_HINT": "auto",
 	}
 	if opts.Nested {
