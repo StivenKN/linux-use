@@ -3,3 +3,4 @@
 /.pr-assets/
 *.test
 /.claude/worktrees/
+/docs/research/private/

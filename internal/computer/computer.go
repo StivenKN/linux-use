@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"math"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,19 +31,18 @@ type Computer struct {
 	connect Connector
 	b       desktop.Backend
 	sess    session.Session
-	display string // selected display name; "" means the first one
-	shot    *Shot  // geometry of the last screenshot
-	pinned  bool   // inside a batch: screenshots don't move the mapping
-	latest  *Shot  // newest screenshot taken while pinned
-	held    bool   // left button held by MouseDown
+	lock    *os.File // held while we drive the session
+	display string   // selected display name; "" means the first one
+	shot    *Shot    // geometry of the last screenshot
+	pinned  bool     // inside a batch: screenshots don't move the mapping
+	latest  *Shot    // newest screenshot taken while pinned
+	held    bool     // left button held by MouseDown
 	cursor  image.Point
-	format  string
-	quality int
 }
 
 // New returns a Computer that connects lazily on first use.
 func New(connect Connector) *Computer {
-	return &Computer{connect: connect, format: "jpeg", quality: 85}
+	return &Computer{connect: connect}
 }
 
 // Close releases the backend.
@@ -51,6 +52,10 @@ func (c *Computer) Close() {
 	if c.b != nil {
 		c.b.Close()
 		c.b = nil
+	}
+	if c.lock != nil {
+		c.lock.Close()
+		c.lock = nil
 	}
 }
 
@@ -71,6 +76,17 @@ func (c *Computer) ensure(ctx context.Context) error {
 	b, s, err := c.connect(ctx)
 	if err != nil {
 		return err
+	}
+	if c.lock == nil || s.Key() != c.sess.Key() {
+		l, err := lock(s)
+		if err != nil {
+			b.Close()
+			return err
+		}
+		if c.lock != nil {
+			c.lock.Close()
+		}
+		c.lock = l
 	}
 	c.b, c.sess, c.shot = b, s, nil
 	return nil
@@ -132,13 +148,18 @@ func (c *Computer) current(ctx context.Context, b desktop.Backend) (desktop.Disp
 }
 
 // SelectDisplay switches which monitor screenshots and coordinates refer to,
-// by name or 1-based number.
+// by name or 1-based number; "" returns to the first monitor.
 func (c *Computer) SelectDisplay(ctx context.Context, which string) (desktop.Display, error) {
 	var picked desktop.Display
 	err := c.do(ctx, func(b desktop.Backend) error {
 		ds, err := b.Displays(ctx)
 		if err != nil {
 			return err
+		}
+		if which == "" {
+			c.display, c.shot = "", nil
+			picked = ds[0]
+			return nil
 		}
 		for _, d := range ds {
 			if d.Name == which || strconv.Itoa(d.ID) == which {
@@ -176,7 +197,7 @@ func (c *Computer) Screenshot(ctx context.Context) (Image, error) {
 			return err
 		}
 		shot := shotFor(d)
-		data, mime, err := encode(resize(raw, shot.Width, shot.Height), c.format, c.quality)
+		data, err := encode(resize(raw, shot.Width, shot.Height))
 		if err != nil {
 			return err
 		}
@@ -185,7 +206,7 @@ func (c *Computer) Screenshot(ctx context.Context) (Image, error) {
 		} else {
 			c.shot = &shot
 		}
-		out = Image{Data: data, MIME: mime, Shot: shot}
+		out = Image{Data: data, MIME: "image/jpeg", Shot: shot}
 		return nil
 	})
 	return out, err
@@ -215,11 +236,11 @@ func (c *Computer) Zoom(ctx context.Context, x0, y0, x1, y1 float64) (Image, err
 			return errors.New("region is outside the screen")
 		}
 		w, h := zoomSize(r.Dx(), r.Dy())
-		data, mime, err := encode(resize(raw.SubImage(r), w, h), c.format, c.quality)
+		data, err := encode(resize(raw.SubImage(r), w, h))
 		if err != nil {
 			return err
 		}
-		out = Image{Data: data, MIME: mime, Shot: Shot{Display: shot.Display, Width: w, Height: h}}
+		out = Image{Data: data, MIME: "image/jpeg", Shot: Shot{Display: shot.Display, Width: w, Height: h}}
 		return nil
 	})
 	return out, err
@@ -276,7 +297,7 @@ func (c *Computer) moveTo(ctx context.Context, b desktop.Backend, p Point) error
 		return err
 	}
 	if p.X < 0 || p.Y < 0 || p.X > float64(shot.Width) || p.Y > float64(shot.Height) {
-		return fmt.Errorf("coordinate (%v, %v) is outside the %dx%d screenshot", p.X, p.Y, shot.Width, shot.Height)
+		return fmt.Errorf("coordinate [%g, %g] is outside the coordinate frame (%dx%d) — coordinates are pixels in the most recent screenshot. Take a new screenshot and pick a point inside it.", p.X, p.Y, shot.Width, shot.Height)
 	}
 	x, y := shot.ToScreen(p.X, p.Y)
 	if err := b.Move(ctx, x, y); err != nil {
@@ -291,6 +312,10 @@ func (c *Computer) Move(ctx context.Context, p Point) error {
 	return c.do(ctx, func(b desktop.Backend) error { return c.moveTo(ctx, b, p) })
 }
 
+// settle is how long the pointer rests at its target before a click, so
+// hover effects and focus changes land first.
+const settle = 50 * time.Millisecond
+
 // Click clicks button count times at p (or at the current position when p
 // is nil) while holding the modifier keys in mods (e.g. "ctrl+shift").
 func (c *Computer) Click(ctx context.Context, p *Point, button desktop.Button, count int, mods string) error {
@@ -299,6 +324,7 @@ func (c *Computer) Click(ctx context.Context, p *Point, button desktop.Button, c
 			if err := c.moveTo(ctx, b, *p); err != nil {
 				return err
 			}
+			time.Sleep(settle)
 		}
 		return c.withMods(ctx, b, mods, func() error {
 			for i := range count {
@@ -339,38 +365,44 @@ func (c *Computer) MouseUp(ctx context.Context) error {
 	})
 }
 
-// Drag presses at from, glides to to, and releases. Intermediate motion
-// lets toolkits cross their drag thresholds.
+// Drag presses at from (or the current position), glides to to with an
+// ease-out curve at 60 fps so toolkits see real motion and cross their drag
+// thresholds, and releases.
 func (c *Computer) Drag(ctx context.Context, from *Point, to Point, mods string) error {
 	return c.do(ctx, func(b desktop.Backend) error {
 		shot, err := c.geometry(ctx, b)
 		if err != nil {
 			return err
 		}
-		start := c.cursor
 		if from != nil {
 			if err := c.moveTo(ctx, b, *from); err != nil {
 				return err
 			}
-			start = c.cursor
+			time.Sleep(settle)
 		}
+		start := c.cursor
 		ex, ey := shot.ToScreen(to.X, to.Y)
 		return c.withMods(ctx, b, mods, func() error {
 			if err := b.Button(ctx, desktop.Left, true); err != nil {
 				return err
 			}
-			defer b.Button(ctx, desktop.Left, false)
-			const steps = 12
-			for i := 1; i <= steps; i++ {
-				x := start.X + (ex-start.X)*i/steps
-				y := start.Y + (ey-start.Y)*i/steps
-				if err := b.Move(ctx, x, y); err != nil {
+			defer b.Button(context.WithoutCancel(ctx), desktop.Left, false)
+			time.Sleep(settle)
+			dx, dy := float64(ex-start.X), float64(ey-start.Y)
+			dur := min(math.Hypot(dx, dy)/2000, 0.5) // seconds, like the built-in tools
+			frames := max(int(dur*60), 1)
+			for i := 1; i <= frames; i++ {
+				t := float64(i) / float64(frames)
+				e := 1 - math.Pow(1-t, 3) // ease-out cubic
+				if err := b.Move(ctx, start.X+int(math.Round(dx*e)), start.Y+int(math.Round(dy*e))); err != nil {
 					return err
 				}
-				time.Sleep(12 * time.Millisecond)
+				if i < frames {
+					time.Sleep(time.Second / 60)
+				}
 			}
 			c.cursor = image.Pt(ex, ey)
-			time.Sleep(30 * time.Millisecond)
+			time.Sleep(settle)
 			return nil
 		})
 	})
@@ -421,8 +453,11 @@ func (c *Computer) Key(ctx context.Context, combos string, repeat int) error {
 		return errors.New("no key given")
 	}
 	return c.do(ctx, func(b desktop.Backend) error {
-		for range max(repeat, 1) {
-			for _, syms := range chords {
+		for i := range max(repeat, 1) {
+			for j, syms := range chords {
+				if i+j > 0 {
+					time.Sleep(8 * time.Millisecond)
+				}
 				if err := chord(ctx, b, syms, 0); err != nil {
 					return err
 				}

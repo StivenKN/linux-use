@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -99,49 +98,7 @@ func runDoctor() error {
 	}
 
 	if len(missing) > 0 {
-		fmt.Printf("\nInstall the agent desktop:\n  %s\n", installCommand(missing))
+		fmt.Printf("\nInstall the agent desktop:\n  %s\n", session.InstallCommand(missing))
 	}
 	return nil
-}
-
-// installCommand returns the package-manager command for the missing tools.
-func installCommand(missing []string) string {
-	id := osRelease()["ID"] + " " + osRelease()["ID_LIKE"]
-	pkgs := map[string]map[string]string{
-		"apt":    {"labwc": "labwc", "Xwayland": "xwayland", "wayvnc": "wayvnc", "waybar": "waybar", "swaybg": "swaybg", "foot": "foot"},
-		"dnf":    {"labwc": "labwc", "Xwayland": "xorg-x11-server-Xwayland", "wayvnc": "wayvnc", "waybar": "waybar", "swaybg": "swaybg", "foot": "foot"},
-		"pacman": {"labwc": "labwc", "Xwayland": "xorg-xwayland", "wayvnc": "wayvnc", "waybar": "waybar", "swaybg": "swaybg", "foot": "foot"},
-		"zypper": {"labwc": "labwc", "Xwayland": "xwayland", "wayvnc": "wayvnc", "waybar": "waybar", "swaybg": "swaybg", "foot": "foot"},
-	}
-	pm, prefix := "apt", "sudo apt install -y --no-install-recommends"
-	switch {
-	case strings.Contains(id, "fedora") || strings.Contains(id, "rhel"):
-		pm, prefix = "dnf", "sudo dnf install -y"
-	case strings.Contains(id, "arch"):
-		pm, prefix = "pacman", "sudo pacman -S --needed"
-	case strings.Contains(id, "suse"):
-		pm, prefix = "zypper", "sudo zypper install -y"
-	}
-	names := []string{}
-	for _, m := range missing {
-		names = append(names, pkgs[pm][m])
-	}
-	return prefix + " " + strings.Join(names, " ")
-}
-
-func osRelease() map[string]string {
-	m := map[string]string{}
-	f, err := os.Open("/etc/os-release")
-	if err != nil {
-		return m
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		k, v, ok := strings.Cut(sc.Text(), "=")
-		if ok {
-			m[k] = strings.Trim(v, `"`)
-		}
-	}
-	return m
 }

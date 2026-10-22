@@ -42,10 +42,12 @@ var names = map[string]Keysym{
 	"scroll_lock": 0xff14, "scrolllock": 0xff14, "menu": 0xff67, "contextmenu": 0xff67, "apps": 0xff67,
 	"num_lock": NumLock, "numlock": NumLock, "caps_lock": CapsLock, "capslock": CapsLock,
 	"space": 0x20, "spacebar": 0x20,
+	"forwarddelete": Delete, "forward_delete": Delete, "padenter": 0xff8d, "numpadenter": 0xff8d,
+	"equals": '=', "leftbracket": '[', "rightbracket": ']', "backtick": '`', "quote": '\'',
 
 	"shift": ShiftL, "shift_l": ShiftL, "lshift": ShiftL, "shift_r": ShiftR, "rshift": ShiftR,
 	"ctrl": ControlL, "control": ControlL, "control_l": ControlL, "ctrl_l": ControlL, "lctrl": ControlL,
-	"control_r": ControlR, "ctrl_r": ControlR, "rctrl": ControlR,
+	"control_r": ControlR, "ctrl_r": ControlR, "rctrl": ControlR, "lcontrol": ControlL, "rcontrol": ControlR,
 	"alt": AltL, "alt_l": AltL, "lalt": AltL, "option": AltL, "opt": AltL, "alt_r": AltR, "ralt": AltR, "altgr": 0xfe03,
 	"meta": SuperL, "meta_l": SuperL, "super": SuperL, "super_l": SuperL, "super_r": SuperR,
 	"win": SuperL, "windows": SuperL, "cmd": SuperL, "command": SuperL, "logo": SuperL,

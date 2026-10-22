@@ -7,18 +7,18 @@ import (
 )
 
 func TestFit(t *testing.T) {
+	// Sizes Claude Code's built-in computer use produces for the same displays.
 	cases := []struct{ w, h, ww, wh int }{
-		{1280, 800, 1280, 800},  // within limits: untouched
-		{1920, 1080, 1429, 804}, // pixel budget binds
-		{3840, 2160, 1429, 804},
-		{1000, 3000, 522, 1568}, // long edge binds... then pixels
+		{1280, 800, 1280, 800},
+		{1920, 1080, 1456, 819},
+		{2560, 1440, 1456, 819},
+		{3840, 2160, 1456, 819},
+		{3024, 1964, 1372, 891},
+		{3456, 2234, 1372, 887},
+		{1080, 1920, 819, 1456},
 	}
 	for _, c := range cases {
-		w, h := fit(c.w, c.h)
-		if w*h > MaxPixels || max(w, h) > MaxLongEdge {
-			t.Errorf("fit(%d,%d) = %dx%d exceeds limits", c.w, c.h, w, h)
-		}
-		if w != c.ww || h != c.wh {
+		if w, h := fit(c.w, c.h); w != c.ww || h != c.wh {
 			t.Errorf("fit(%d,%d) = %dx%d, want %dx%d", c.w, c.h, w, h, c.ww, c.wh)
 		}
 	}
@@ -33,7 +33,7 @@ func TestShotMapping(t *testing.T) {
 		t.Errorf("ToScreen right-middle = %d,%d", x, y)
 	}
 	ix, iy := s.FromScreen(1920+960, 540)
-	if ix != (s.Width+1)/2 || iy != s.Height/2 {
-		t.Errorf("FromScreen center = %d,%d want %d,%d", ix, iy, s.Width/2, s.Height/2)
+	if ix != (s.Width+1)/2 || iy != (s.Height+1)/2 {
+		t.Errorf("FromScreen center = %d,%d", ix, iy)
 	}
 }

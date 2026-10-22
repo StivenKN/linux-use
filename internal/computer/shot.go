@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"image"
 	"image/jpeg"
-	"image/png"
 	"math"
 
 	"golang.org/x/image/draw"
@@ -12,12 +11,14 @@ import (
 	"github.com/StivenKN/linux-use/internal/desktop"
 )
 
-// Limits for images sent to the model. The API downsamples anything larger,
-// which would silently break coordinate mapping, so we scale first and keep
-// the exact factor.
-var (
-	MaxLongEdge = 1568
-	MaxPixels   = 1_150_000
+// Screenshot budget, matching Claude Code's built-in computer use: the long
+// edge stays within 1568 px and the image within 1568 tokens of 28×28 px
+// tiles. Images over budget get resized by the harness, which would break
+// coordinate mapping, so we size them ourselves and keep the exact factor.
+const (
+	maxTargetPx     = 1568
+	maxTargetTokens = 1568
+	pxPerToken      = 28
 )
 
 // Shot remembers how the last screenshot maps onto the screen: the model
@@ -28,27 +29,36 @@ type Shot struct {
 	Height  int
 }
 
-// fit returns the largest size within the model limits preserving aspect.
+func tokens(w, h int) int { return ((w-1)/pxPerToken + 1) * ((h-1)/pxPerToken + 1) }
+
+// fit returns the largest size within budget that keeps the aspect ratio,
+// by binary search on the long edge (the same search Claude Code runs).
 func fit(w, h int) (int, int) {
-	s := 1.0
-	if long := max(w, h); long > MaxLongEdge {
-		s = float64(MaxLongEdge) / float64(long)
+	if w <= maxTargetPx && h <= maxTargetPx && tokens(w, h) <= maxTargetTokens {
+		return w, h
 	}
-	if px := float64(w) * float64(h) * s * s; px > float64(MaxPixels) {
-		s *= math.Sqrt(float64(MaxPixels) / px)
+	if h > w {
+		a, b := fit(h, w)
+		return b, a
 	}
-	return scaled(w, s), scaled(h, s)
+	ratio := float64(w) / float64(h)
+	short := func(long int) int { return max(int(math.Round(float64(long)/ratio)), 1) }
+	lo, hi := 1, w
+	for lo+1 < hi {
+		mid := (lo + hi) / 2
+		if mid <= maxTargetPx && tokens(mid, short(mid)) <= maxTargetTokens {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return lo, short(lo)
 }
 
-// scaled floors n*s, tolerating float error so 3000*(1568/3000) is 1568.
-func scaled(n int, s float64) int { return max(1, int(float64(n)*s+1e-6)) }
-
-// zoomSize magnifies a w×h region up to 4x while staying within model limits.
+// zoomSize sizes a zoomed region: native pixels, magnified up to 2x so small
+// text spans more of the model's tiles, within the same budget.
 func zoomSize(w, h int) (int, int) {
-	s := min(4.0,
-		float64(MaxLongEdge)/float64(max(w, h)),
-		math.Sqrt(float64(MaxPixels)/(float64(w)*float64(h))))
-	return scaled(w, s), scaled(h, s)
+	return fit(w*2, h*2)
 }
 
 // shotFor returns the geometry a screenshot of d would have.
@@ -82,14 +92,9 @@ func resize(src image.Image, w, h int) image.Image {
 	return dst
 }
 
-// encode renders img as PNG or JPEG.
-func encode(img image.Image, format string, quality int) ([]byte, string, error) {
+// encode renders img as JPEG at quality 75, like the built-in tools.
+func encode(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
-	if format == "jpeg" {
-		err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality})
-		return buf.Bytes(), "image/jpeg", err
-	}
-	enc := png.Encoder{CompressionLevel: png.BestSpeed}
-	err := enc.Encode(&buf, img)
-	return buf.Bytes(), "image/png", err
+	err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 75})
+	return buf.Bytes(), err
 }

@@ -114,6 +114,27 @@ func Find(start bool) (Session, error) {
 	return agent(start)
 }
 
+// WantsAgent reports whether Find would drive the agent desktop, without
+// starting anything.
+func WantsAgent() bool {
+	switch Target() {
+	case "agent":
+		return true
+	case "auto":
+		_, ok := inherited()
+		return !ok
+	}
+	return false
+}
+
+// Key identifies the session's display, for per-desktop locks.
+func (s Session) Key() string {
+	if s.Wayland != "" {
+		return filepath.Base(s.Wayland)
+	}
+	return "x11" + strings.ReplaceAll(s.X11, "/", "_")
+}
+
 // inherited returns the session from our own environment, as when Claude
 // Code runs in a terminal on the user's desktop.
 func inherited() (Session, bool) {

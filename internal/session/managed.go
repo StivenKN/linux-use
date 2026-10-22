@@ -78,7 +78,7 @@ func Compositor() (string, error) {
 			return p, nil
 		}
 	}
-	return "", errors.New("no supported compositor installed; install labwc (recommended) or sway — run `linux-use doctor` for the exact command")
+	return "", fmt.Errorf("no graphical session is available and the agent desktop is not installed. Install it with:\n  %s\nthen try again (or run /linux-use:setup)", InstallCommand(DesktopPackages))
 }
 
 // Up starts the agent desktop (or returns it if already running) and waits
