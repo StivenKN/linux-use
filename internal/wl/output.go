@@ -29,6 +29,7 @@ type Outputs struct {
 	xdgMgr  uint32
 	mu      sync.Mutex
 	outputs map[uint32]*Output // keyed by registry name
+	pending []Global           // hotplugged outputs, bound by the next List
 }
 
 // TrackOutputs binds all current and future outputs. Call Roundtrip afterwards
@@ -38,17 +39,20 @@ func TrackOutputs(c *Conn) *Outputs {
 	if gs := c.Globals("zxdg_output_manager_v1"); len(gs) > 0 {
 		t.xdgMgr, _, _ = c.Bind(gs[0], 3, nil)
 	}
+	// Hotplug arrives on the reader goroutine, which must not create objects
+	// (new ids must reach the compositor in allocation order), so new
+	// outputs are queued and bound by the caller in List.
 	c.OnGlobal(func(g Global, added bool) {
 		if g.Interface != "wl_output" {
 			return
 		}
+		t.mu.Lock()
+		defer t.mu.Unlock()
 		if added {
-			t.add(g)
+			t.pending = append(t.pending, g)
 			return
 		}
-		t.mu.Lock()
 		delete(t.outputs, g.Name)
-		t.mu.Unlock()
 	})
 	for _, g := range c.Globals("wl_output") {
 		t.add(g)
@@ -120,7 +124,16 @@ func (t *Outputs) add(g Global) {
 }
 
 // List returns outputs sorted by position (left to right, top to bottom).
+// It binds outputs plugged in since the last call; their geometry shows up
+// after the caller's next round trip.
 func (t *Outputs) List() []Output {
+	t.mu.Lock()
+	pending := t.pending
+	t.pending = nil
+	t.mu.Unlock()
+	for _, g := range pending {
+		t.add(g)
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	out := make([]Output, 0, len(t.outputs))

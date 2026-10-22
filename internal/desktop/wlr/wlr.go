@@ -129,8 +129,11 @@ func (b *Backend) Close() error { return b.c.Close() }
 func (b *Backend) Alive() bool { return b.c.Err() == nil }
 
 func (b *Backend) Displays(ctx context.Context) ([]desktop.Display, error) {
-	if err := b.c.Roundtrip(ctx); err != nil {
-		return nil, err
+	b.outputs.List() // binds hotplugged outputs; two round trips fetch their geometry
+	for range 2 {
+		if err := b.c.Roundtrip(ctx); err != nil {
+			return nil, err
+		}
 	}
 	outs := b.outputs.List()
 	ds := make([]desktop.Display, 0, len(outs))

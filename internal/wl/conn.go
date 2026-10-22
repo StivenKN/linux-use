@@ -132,7 +132,9 @@ func (c *Conn) fail(err error) {
 }
 
 // NewObject allocates a client object id and registers its event handler.
-// A nil handler ignores all events.
+// A nil handler ignores all events. New ids must reach the compositor in
+// the order they were allocated, so create objects from one goroutine and
+// never from inside a Handler.
 func (c *Conn) NewObject(h Handler) uint32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
