@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/StivenKN/linux-use/internal/desktop"
 	"github.com/StivenKN/linux-use/internal/desktop/wlr"
+	"github.com/StivenKN/linux-use/internal/desktop/x11"
 	"github.com/StivenKN/linux-use/internal/session"
 )
 
@@ -14,5 +15,11 @@ var backends = []func(session.Session) (desktop.Backend, error){
 			return nil, desktop.ErrUnsupported
 		}
 		return wlr.Open(s.Wayland)
+	},
+	func(s session.Session) (desktop.Backend, error) {
+		if s.X11 == "" {
+			return nil, desktop.ErrUnsupported
+		}
+		return x11.Open(s.X11)
 	},
 }
