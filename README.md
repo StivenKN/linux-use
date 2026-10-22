@@ -62,15 +62,15 @@ open vnc://localhost:5900                                  # macOS; any VNC view
 | --- | --- | --- | --- | --- | --- |
 | **wlroots Wayland**: sway, labwc, Hyprland, river, Wayfire, niri… | ✓ wlr-screencopy / ext-image-copy-capture | ✓ virtual pointer + keyboard | ✓ | ✓ | none |
 | **X11**: Xfce, Cinnamon, MATE, i3, Openbox, GNOME/KDE on Xorg… | ✓ | ✓ XTEST | ✓ EWMH | ✓ | none |
-| **GNOME (Wayland)** | ✓ screenshot portal ¹ | ✓ Mutter RemoteDesktop | ✓ with the linux-use extension ² | ✓ | GNOME Shell extension ² |
+| **GNOME (Wayland)** | ✓ Mutter screen cast over PipeWire ¹ | ✓ Mutter RemoteDesktop | ✓ with the linux-use extension ² | ✓ | GNOME Shell extension ² |
 | **KDE Plasma 6 (Wayland)** | ✓ KWin ScreenShot2 | ✓ KWin fake input | ✓ | ✓ | none ³ |
 | **Agent desktop** (headless labwc) | ✓ | ✓ | ✓ | ✓ | `labwc wayvnc waybar swaybg foot xwayland` |
 
-¹ GNOME asks once ("Allow apps to take screenshots?") and remembers the answer. It flashes the screen and plays the shutter sound on every capture, which adds about half a second. While Claude is in control, GNOME shows its screen-sharing indicator. Text the keyboard layout can't type (emoji, accents, Cyrillic) is pasted, and your clipboard is restored afterwards.
+¹ Screenshots are read from Mutter's screen cast with linux-use's own PipeWire client: no prompt, no flash, no shutter sound, a few milliseconds each. While Claude is in control, GNOME shows its screen-sharing indicator. If PipeWire capture fails, linux-use falls back to the screenshot portal, which asks once and flashes on every capture. Text the keyboard layout can't type (emoji, accents, Cyrillic) is pasted, and your clipboard is restored afterwards.
 ² GNOME only lets its own components list windows, so linux-use ships a tiny GNOME Shell extension (GNOME 45 or newer) that lists and focuses them. `/linux-use:setup` explains it and installs it if you agree (`linux-use gnome-extension install`; `uninstall` removes it). It powers `list_windows` and `activate_window`, lets `open_application` bring a running app to the front, and shows linux-use which app is in front, so input to apps you didn't grant and typing into terminals are refused like everywhere else. GNOME only loads new extensions at login, so log out and back in once after installing. Without it, Claude works through `open_application` and screenshots, and the `request_access` grant is the only check.
 ³ On first use, linux-use writes a hidden `~/.local/share/applications/linux-use.desktop`. That's how KWin grants a program its screenshot and input interfaces, so there's no prompt.
 
-The binary speaks every protocol itself, so there's no `grim`, `wtype`, `xdotool` or `ydotool` to install. Typing works with any keyboard layout, and emoji, accents and CJK are typed as-is.
+The binary speaks every protocol itself (Wayland, X11, D-Bus and PipeWire), so there's no `grim`, `wtype`, `xdotool`, `ydotool` or GStreamer to install. Typing works with any keyboard layout, and emoji, accents and CJK are typed as-is.
 
 ## Tools
 
@@ -112,6 +112,7 @@ make test                      # on Linux
 | Package | |
 | --- | --- |
 | `internal/wl` | dependency-free Wayland client: wire protocol, shm, screencopy, virtual input, toplevels, data-control, output management |
+| `internal/pw` | dependency-free PipeWire client: native protocol, SPA PODs, and a client-node that reads a video stream from shared memory |
 | `internal/desktop/*` | one backend per graphical stack (`wlr`, `gnome`, `kde`, `x11`) behind a small `Backend` interface |
 | `internal/session` | finds the session to drive and runs the agent desktop |
 | `internal/computer` | coordinate mapping, screenshot sizing, chords, drags, app launching, the session lock |

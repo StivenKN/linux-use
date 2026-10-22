@@ -50,7 +50,7 @@ var (
 	_ desktop.Clipboard = (*Backend)(nil)
 )
 
-// Backend implements desktop.Backend and desktop.Clipboard.
+// Backend implements desktop.Backend, desktop.Windows and desktop.Clipboard.
 type Backend struct {
 	bus  *dbus.Conn
 	sigs chan *dbus.Signal

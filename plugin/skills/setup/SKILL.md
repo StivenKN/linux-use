@@ -11,6 +11,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/linux-use *), Read, Edit
 2. Explain the result to the user in a few lines:
    - Which session Claude will drive: their own desktop (Wayland or X11), or the **agent desktop**, a private headless desktop that linux-use starts for servers and SSH sessions.
    - Which backend drives it, and whether the test screenshot worked.
+   - On GNOME, if the doctor says screenshots fell back to the screenshot portal, PipeWire capture failed: GNOME will ask once to allow screenshots and flash the screen on each one. Suggest checking that PipeWire runs (`systemctl --user status pipewire`) and show the error it printed.
 3. If the doctor prints an install command, show it and ask before running it, because it needs `sudo`. If they agree, run it, then run the doctor again to confirm.
 4. GNOME Shell extension. If the doctor has a "GNOME Shell extension" section that isn't ✓:
    - Explain what it adds. GNOME only lets its own components list windows, so linux-use needs a tiny extension of its own for that. With it, Claude can list and switch windows, and `open_application` brings an app that's already running to the front. It also lets linux-use see which app is in front, so Claude can't type into a terminal or into an app they didn't grant. Without it, the `request_access` grant is the only check. It goes in `~/.local/share/gnome-shell/extensions/linux-use@stivenkn.github.io`, and `linux-use gnome-extension uninstall` removes it.

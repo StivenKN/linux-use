@@ -6,7 +6,7 @@
 # Overrides: LINUX_USE_BIN=/path/to/linux-use runs a local build instead.
 set -eu
 
-VERSION=0.1.0
+VERSION=0.2.0
 REPO=StivenKN/linux-use
 
 if [ -n "${LINUX_USE_BIN:-}" ]; then
@@ -43,17 +43,20 @@ if [ ! -x "$bin" ]; then
     else echo "linux-use: need curl or wget to download the binary" >&2; return 1
     fi
   }
+  command -v sha256sum >/dev/null 2>&1 || { echo "linux-use: need sha256sum to verify the download" >&2; exit 1; }
   echo "linux-use: downloading v$VERSION for linux/$arch…" >&2
-  fetch "$url/linux-use-linux-$arch" "$tmp" || { echo "linux-use: download failed from $url" >&2; exit 1; }
-  if fetch "$url/checksums.txt" "$tmp.sums" && command -v sha256sum >/dev/null 2>&1; then
-    want=$(grep " linux-use-linux-$arch\$" "$tmp.sums" | cut -d' ' -f1)
-    got=$(sha256sum "$tmp" | cut -d' ' -f1)
-    if [ -z "$want" ] || [ "$want" != "$got" ]; then
-      echo "linux-use: checksum mismatch for the downloaded binary; refusing to run it" >&2
-      exit 1
-    fi
+  if ! fetch "$url/linux-use-linux-$arch" "$tmp" || ! fetch "$url/checksums.txt" "$tmp.sums"; then
+    echo "linux-use: download failed from $url" >&2
+    exit 1
+  fi
+  want=$(grep " linux-use-linux-$arch\$" "$tmp.sums" | cut -d' ' -f1)
+  got=$(sha256sum "$tmp" | cut -d' ' -f1)
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    echo "linux-use: checksum mismatch for the downloaded binary; refusing to run it" >&2
+    exit 1
   fi
   chmod +x "$tmp"
   mv -f "$tmp" "$bin"
+  rm -f "$tmp.sums" # exec skips the EXIT trap
 fi
 exec "$bin" "$@"

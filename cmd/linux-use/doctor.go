@@ -50,6 +50,13 @@ func runDoctor() error {
 					bad("%s backend: screenshot failed: %v", b.Name(), err)
 				} else {
 					ok("%s backend drives %s: %d display(s), screenshot in %v", b.Name(), s, len(ds), time.Since(start).Round(time.Millisecond))
+					if g, isGnome := b.(*gnome.Backend); isGnome {
+						if err := g.PipeWireErr(); err != nil {
+							bad("screenshots fell back to the screenshot portal, which flashes and plays a sound, because PipeWire capture failed: %v", err)
+						} else {
+							ok("screenshots: Mutter's screen cast over PipeWire (no prompt, flash or sound)")
+						}
+					}
 				}
 			} else {
 				bad("%s backend: no displays: %v", b.Name(), err)

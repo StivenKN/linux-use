@@ -35,6 +35,15 @@ type shotResult struct {
 // to the screenshot portal if that fails.
 func (b *Backend) Capture(ctx context.Context, d desktop.Display) (*image.RGBA, error) {
 	img, err := b.capturePipeWire(ctx, d)
+	if err != nil && ctx.Err() == nil {
+		// GNOME may have ended the session under us (the user stopped
+		// screen sharing) before its Closed signal arrived: retry once on a
+		// fresh one.
+		b.mu.Lock()
+		b.stale = true
+		b.mu.Unlock()
+		img, err = b.capturePipeWire(ctx, d)
+	}
 	if err == nil {
 		b.pwErr = nil
 		return img, nil
