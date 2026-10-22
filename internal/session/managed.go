@@ -33,6 +33,9 @@ type Options struct {
 }
 
 func (o *Options) defaults() {
+	if o.VNCListen == "" {
+		o.VNCListen = os.Getenv("LINUX_USE_VNC_LISTEN")
+	}
 	if o.Width == 0 || o.Height == 0 {
 		o.Width, o.Height = 1280, 800
 		if w, h, ok := parseSize(os.Getenv("LINUX_USE_RESOLUTION")); ok {

@@ -433,8 +433,9 @@ func (c *Computer) Scroll(ctx context.Context, p *Point, direction string, amoun
 	})
 }
 
-// Type enters text as if typed.
+// Type enters text as if typed; Windows line endings become one Return.
 func (c *Computer) Type(ctx context.Context, text string) error {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	return c.do(ctx, func(b desktop.Backend) error { return b.Type(ctx, text) })
 }
 

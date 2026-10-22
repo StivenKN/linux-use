@@ -112,6 +112,10 @@ func printStatus(s session.Session) {
 	}
 	fmt.Printf("watch it:      ssh -L 5900:%s %s@%s\n", target, os.Getenv("USER"), host)
 	fmt.Printf("               then open vnc://localhost:5900 in a VNC viewer\n")
+	if strings.HasPrefix(s.VNC, "unix:") {
+		fmt.Printf("               (if your SSH server refuses socket forwarding, e.g. Tailscale SSH as another user,\n")
+		fmt.Printf("               restart with `linux-use desktop up --vnc-listen 127.0.0.1` or LINUX_USE_VNC_LISTEN=127.0.0.1)\n")
+	}
 }
 
 // connect finds (or starts) the session and opens a backend for it. When no

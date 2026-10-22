@@ -60,6 +60,11 @@ func (s Session) Env() []string {
 	}
 	if s.X11 != "" {
 		env = append(env, "DISPLAY="+s.X11)
+		if s.Wayland == "" {
+			// Snap apps switch to Wayland whenever a wayland-0 socket exists
+			// (e.g. the agent desktop's), even inside an X11 session.
+			env = append(env, "DISABLE_WAYLAND=1")
+		}
 	}
 	if s.Managed {
 		env = append(env,
