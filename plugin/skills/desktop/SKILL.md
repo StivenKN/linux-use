@@ -1,6 +1,6 @@
 ---
 name: desktop
-description: Start, stop, or check the linux-use agent desktop (a private headless Wayland desktop Claude drives on servers and over SSH), and explain how to watch it over VNC. Use when the user runs /linux-use:desktop, or asks to see, watch, restart or reset the desktop Claude is using.
+description: Start, stop, or check the linux-use agent desktop (a private headless Wayland desktop Claude drives on servers and over SSH), and explain how to watch it over VNC. Use when the user runs /linux-use:desktop, or asks to see, watch, restart or reset the desktop Claude is using. Not needed before computer use: the computer-use tools start the agent desktop on their own when they need it.
 argument-hint: "[up|down|status|restart] [--size 1280x800] [--window] [--vnc-listen 127.0.0.1]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/linux-use *)
 ---
