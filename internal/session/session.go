@@ -80,6 +80,7 @@ var ErrNoSession = errors.New("no graphical session found")
 //
 //	auto     (default) the session we were started in, else the agent desktop
 //	agent    always the headless agent desktop, even inside a real desktop
+//	window   the agent desktop, shown as a window inside the current desktop
 //	desktop  only the session we were started in; never start the agent desktop
 //	wayland-N or :N  a specific Wayland socket or X display
 func Target() string {
@@ -102,7 +103,9 @@ func Find(start bool) (Session, error) {
 	case strings.HasPrefix(target, ":"):
 		return Session{X11: target, Desktop: os.Getenv("XDG_CURRENT_DESKTOP")}, nil
 	case target == "agent":
-		return agent(start)
+		return agent(start, false)
+	case target == "window":
+		return agent(start, true)
 	}
 
 	if s, ok := inherited(); ok {
@@ -111,14 +114,14 @@ func Find(start bool) (Session, error) {
 	if target == "desktop" {
 		return Session{}, fmt.Errorf("%w: WAYLAND_DISPLAY and DISPLAY are unset (LINUX_USE_TARGET=desktop)", ErrNoSession)
 	}
-	return agent(start)
+	return agent(start, false)
 }
 
 // WantsAgent reports whether Find would drive the agent desktop, without
 // starting anything.
 func WantsAgent() bool {
 	switch Target() {
-	case "agent":
+	case "agent", "window":
 		return true
 	case "auto":
 		_, ok := inherited()
@@ -148,14 +151,23 @@ func inherited() (Session, bool) {
 	return Session{}, false
 }
 
-func agent(start bool) (Session, error) {
+func agent(start, window bool) (Session, error) {
 	if s, err := Running(); err == nil {
 		return s, nil
 	}
 	if !start {
 		return Session{}, fmt.Errorf("%w: the agent desktop is not running (start it with `linux-use desktop up`)", ErrNoSession)
 	}
-	return Up(Options{})
+	return Up(Options{Nested: window})
+}
+
+// Fallback starts the agent desktop for a session no backend can drive
+// (e.g. KDE): as a window inside it, so the user still sees Claude work.
+func Fallback(s Session) (Session, error) {
+	if Target() != "auto" || s.Managed {
+		return Session{}, ErrNoSession
+	}
+	return agent(true, s.Wayland != "" || s.X11 != "")
 }
 
 // RuntimeDir returns XDG_RUNTIME_DIR, falling back to /run/user/$UID.

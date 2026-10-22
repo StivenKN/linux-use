@@ -186,6 +186,9 @@ func launch(argv []string, env map[string]string, nested bool) error {
 	defer logf.Close()
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = os.Environ()
+	if bus := filepath.Join(RuntimeDir(), "bus"); os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" && socketExists(bus) {
+		cmd.Env = append(cmd.Env, "DBUS_SESSION_BUS_ADDRESS=unix:path="+bus)
+	}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -233,7 +236,7 @@ func Hook() error {
 	}
 	dir := StateDir()
 	cfg := os.Getenv("LINUX_USE_CONFIG")
-	if w, h, ok := parseSize(os.Getenv("LINUX_USE_RESOLUTION")); ok && os.Getenv("WLR_BACKENDS") == "headless" {
+	if w, h, ok := parseSize(os.Getenv("LINUX_USE_RESOLUTION")); ok {
 		if c, err := wl.Dial(display); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := wl.SetOutputMode(ctx, c, "", w, h); err != nil {
@@ -256,7 +259,7 @@ func Hook() error {
 	}
 	spawn("swaybg", "-c", "#2e3440")
 	spawn("waybar", "-c", filepath.Join(cfg, "waybar.jsonc"), "-s", filepath.Join(cfg, "waybar.css"))
-	if vnc := os.Getenv("LINUX_USE_VNC"); vnc != "off" && vnc != "" {
+	if vnc := os.Getenv("LINUX_USE_VNC"); vnc != "off" && vnc != "" && os.Getenv("WLR_BACKENDS") == "headless" {
 		host, port, _ := net.SplitHostPort(vnc)
 		if spawn("wayvnc", "--render-cursor", "--disable-resizing", host, port) {
 			s.VNC = vnc

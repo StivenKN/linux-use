@@ -105,13 +105,22 @@ func printStatus(s session.Session) {
 	}
 }
 
-// connect finds (or starts) the session and opens a backend for it.
+// connect finds (or starts) the session and opens a backend for it. When no
+// backend can drive the user's desktop, it falls back to the agent desktop
+// in a window.
 func connect(ctx context.Context) (desktop.Backend, session.Session, error) {
 	s, err := session.Find(true)
 	if err != nil {
 		return nil, s, err
 	}
-	return connectTo(s)
+	b, s, err := connectTo(s)
+	if errors.Is(err, desktop.ErrUnsupported) {
+		if as, ferr := session.Fallback(s); ferr == nil {
+			fmt.Fprintf(os.Stderr, "linux-use: %v; using the agent desktop in a window instead\n", err)
+			return connectTo(as)
+		}
+	}
+	return b, s, err
 }
 
 // connectTo opens the first backend that can drive s.
@@ -129,5 +138,5 @@ func connectTo(s session.Session) (desktop.Backend, session.Session, error) {
 			reasons = append(reasons, err.Error())
 		}
 	}
-	return nil, s, fmt.Errorf("no backend can drive %s: %s", s, strings.Join(reasons, "; "))
+	return nil, s, fmt.Errorf("%w: no backend can drive %s: %s", desktop.ErrUnsupported, s, strings.Join(reasons, "; "))
 }
