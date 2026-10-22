@@ -3,6 +3,7 @@ module github.com/StivenKN/linux-use
 go 1.26.0
 
 require (
+	github.com/jezek/xgb v1.3.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
