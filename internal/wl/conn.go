@@ -155,6 +155,14 @@ func (c *Conn) SetHandler(id uint32, h Handler) {
 	c.mu.Unlock()
 }
 
+// Forget drops the handler of a server-created object after the client
+// destroyed it. (Client-created ids are freed by wl_display.delete_id.)
+func (c *Conn) Forget(id uint32) {
+	c.mu.Lock()
+	delete(c.handlers, id)
+	c.mu.Unlock()
+}
+
 // Roundtrip blocks until the compositor has processed every request sent so far.
 func (c *Conn) Roundtrip(ctx context.Context) error {
 	done := make(chan struct{})

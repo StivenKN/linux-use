@@ -80,6 +80,7 @@ func (t *Toplevels) handle(handle uint32) Handler {
 			delete(t.m, id)
 			t.mu.Unlock()
 			t.c.Request(handle, 7).Send() // destroy
+			t.c.Forget(handle)
 		}
 	}
 }

@@ -81,6 +81,7 @@ func (cb *Clipboard) replace(slot *uint32, id uint32) {
 	cb.mu.Unlock()
 	if old != 0 && !keep {
 		cb.c.Request(old, 1).Send() // offer.destroy
+		cb.c.Forget(old)
 	}
 }
 

@@ -160,10 +160,16 @@ func (b *Backend) Capture(ctx context.Context, d desktop.Display) (*image.RGBA, 
 	if err != nil {
 		return nil, err
 	}
+	var img *image.RGBA
 	if b.wlrCopy != 0 {
-		return wl.CaptureWLR(ctx, b.c, b.wlrCopy, b.shm, o.ID, false)
+		img, err = wl.CaptureWLR(ctx, b.c, b.wlrCopy, b.shm, o.ID, false)
+	} else {
+		img, err = wl.CaptureExt(ctx, b.c, b.extSrc, b.extCopy, b.shm, o.ID, false)
 	}
-	return wl.CaptureExt(ctx, b.c, b.extSrc, b.extCopy, b.shm, o.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	return wl.Untransform(img, o.Transform), nil
 }
 
 // layout returns the bounding box of all outputs, which is what absolute
