@@ -34,6 +34,8 @@ func main() {
 		err = runDoctor()
 	case "debug":
 		err = runDebug(os.Args[2:])
+	case "gnome-extension":
+		err = runGnomeExtension(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	default:
@@ -49,11 +51,12 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: linux-use <command>
 
-  mcp       run the computer-use MCP server on stdio (used by the Claude Code plugin)
-  desktop   manage the headless agent desktop: up | down | status
-  doctor    check this machine and print what is missing
-  debug     raw backend operations for manual testing
-  version   print the version`)
+  mcp              run the computer-use MCP server on stdio (used by the Claude Code plugin)
+  desktop          manage the headless agent desktop: up | down | status
+  doctor           check this machine and print what is missing
+  gnome-extension  manage the GNOME Shell extension that lists and focuses windows: install | uninstall | status
+  debug            raw backend operations for manual testing
+  version          print the version`)
 }
 
 func runDesktop(args []string) error {

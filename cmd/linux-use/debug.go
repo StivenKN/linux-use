@@ -15,10 +15,10 @@ import (
 
 // runDebug exposes raw backend operations for manual testing:
 //
-//	linux-use debug displays|shot FILE|move X Y|click X Y|type TEXT|key COMBO|windows|clip [TEXT]
+//	linux-use debug displays|shot FILE|move X Y|click X Y|type TEXT|key COMBO|windows|activate ID|clip [TEXT]
 func runDebug(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: linux-use debug displays|shot FILE|move X Y|click X Y|type TEXT|key COMBO|windows|clip [TEXT]")
+		return fmt.Errorf("usage: linux-use debug displays|shot FILE|move X Y|click X Y|type TEXT|key COMBO|windows|activate ID|clip [TEXT]")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -92,6 +92,12 @@ func runDebug(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(ws)
+	case "activate":
+		w, ok := b.(desktop.Windows)
+		if !ok {
+			return fmt.Errorf("backend cannot focus windows")
+		}
+		return w.Activate(ctx, args[1])
 	case "clip":
 		c, ok := b.(desktop.Clipboard)
 		if !ok {

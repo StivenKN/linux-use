@@ -630,7 +630,11 @@ func (c *Computer) OpenApplication(ctx context.Context, name string) (string, er
 		wins, canSee := b.(desktop.Windows)
 		var before []desktop.Window
 		if canSee {
-			before, _ = wins.Windows(ctx)
+			var err error
+			// Backends can fail to list windows (GNOME without its
+			// extension): then just launch, like a backend without windows.
+			before, err = wins.Windows(ctx)
+			canSee = err == nil
 			for _, w := range before {
 				if app.Owns(w.AppID) {
 					if err := wins.Activate(ctx, w.ID); err != nil {

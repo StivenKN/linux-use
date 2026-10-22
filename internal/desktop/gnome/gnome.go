@@ -12,7 +12,8 @@
 //     and every capture flashes the screen and plays the shutter sound (GNOME
 //     replies only after its 0.5 s flash animation).
 //
-// Windows are not exposed: org.gnome.Shell.Introspect is allowlisted too.
+// org.gnome.Shell.Introspect is allowlisted too, so windows come from the
+// linux-use GNOME Shell extension (extension.go), installed with consent.
 package gnome
 
 import (
@@ -42,6 +43,7 @@ const (
 
 var (
 	_ desktop.Backend   = (*Backend)(nil)
+	_ desktop.Windows   = (*Backend)(nil)
 	_ desktop.Clipboard = (*Backend)(nil)
 )
 
