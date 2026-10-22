@@ -64,11 +64,12 @@ func runDesktop(args []string) error {
 	case "up":
 		fs := flag.NewFlagSet("desktop up", flag.ExitOnError)
 		size := fs.String("size", "", "output size WIDTHxHEIGHT (default 1280x800, or $LINUX_USE_RESOLUTION)")
-		port := fs.Int("vnc-port", 0, "VNC viewer port (0 = first free from 5900, -1 = no viewer)")
-		listen := fs.String("vnc-listen", "127.0.0.1", "VNC viewer listen address")
+		listen := fs.String("vnc-listen", "", "serve the VNC viewer on this TCP address (e.g. 127.0.0.1) instead of a private unix socket; it has no password")
+		port := fs.Int("vnc-port", 0, "TCP port with --vnc-listen (default: first free from 5900)")
+		noVNC := fs.Bool("no-vnc", false, "don't start the VNC viewer")
 		nested := fs.Bool("window", false, "open the agent desktop as a window inside your current desktop")
 		fs.Parse(args[1:])
-		opts := session.Options{VNCPort: *port, VNCListen: *listen, Nested: *nested}
+		opts := session.Options{VNCListen: *listen, VNCPort: *port, NoVNC: *noVNC, Nested: *nested}
 		if *size != "" {
 			if _, err := fmt.Sscanf(*size, "%dx%d", &opts.Width, &opts.Height); err != nil {
 				return fmt.Errorf("bad --size %q", *size)
@@ -98,11 +99,19 @@ func runDesktop(args []string) error {
 
 func printStatus(s session.Session) {
 	fmt.Printf("agent desktop: running (%s)\n", s)
-	if s.VNC != "" {
-		host, _ := os.Hostname()
-		fmt.Printf("watch it:      VNC %s\n", s.VNC)
-		fmt.Printf("from another machine: ssh -L 5900:%s %s@%s, then open vnc://localhost:5900\n", s.VNC, os.Getenv("USER"), host)
+	if s.VNC == "" {
+		return
 	}
+	host, _ := os.Hostname()
+	target := s.VNC
+	if sock, ok := strings.CutPrefix(s.VNC, "unix:"); ok {
+		target = sock
+		fmt.Printf("viewer:        VNC on unix socket %s (private to %s)\n", sock, os.Getenv("USER"))
+	} else {
+		fmt.Printf("viewer:        VNC on %s (no password: anyone who can reach it controls the desktop)\n", s.VNC)
+	}
+	fmt.Printf("watch it:      ssh -L 5900:%s %s@%s\n", target, os.Getenv("USER"), host)
+	fmt.Printf("               then open vnc://localhost:5900 in a VNC viewer\n")
 }
 
 // connect finds (or starts) the session and opens a backend for it. When no

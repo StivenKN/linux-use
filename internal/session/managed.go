@@ -26,8 +26,9 @@ const unit = "linux-use-desktop"
 // Options configures the agent desktop.
 type Options struct {
 	Width, Height int    // output size, default 1280x800
-	VNCPort       int    // 0 picks 5900 or the next free port; -1 disables VNC
-	VNCListen     string // address for the viewer, default 127.0.0.1
+	VNCListen     string // TCP address for the viewer; "" serves it on a private unix socket
+	VNCPort       int    // TCP port when VNCListen is set; 0 picks 5900 or the next free one
+	NoVNC         bool   // don't start the viewer
 	Nested        bool   // open as a window inside the current desktop instead of headless
 }
 
@@ -37,9 +38,6 @@ func (o *Options) defaults() {
 		if w, h, ok := parseSize(os.Getenv("LINUX_USE_RESOLUTION")); ok {
 			o.Width, o.Height = w, h
 		}
-	}
-	if o.VNCListen == "" {
-		o.VNCListen = "127.0.0.1"
 	}
 }
 
@@ -150,9 +148,15 @@ func Up(opts Options) (Session, error) {
 	return Session{}, fmt.Errorf("agent desktop did not come up within 20s; logs: %s", logHint())
 }
 
+// vncSetting picks where the viewer listens. By default it's a unix socket
+// in the private runtime dir, so only this user (and their SSH tunnels) can
+// reach it; the VNC server itself has no password.
 func vncSetting(o Options) string {
-	if o.VNCPort < 0 {
+	switch {
+	case o.NoVNC:
 		return "off"
+	case o.VNCListen == "":
+		return "unix:" + filepath.Join(StateDir(), "vnc.sock")
 	}
 	port := o.VNCPort
 	if port == 0 {
@@ -260,8 +264,15 @@ func Hook() error {
 	spawn("swaybg", "-c", "#2e3440")
 	spawn("waybar", "-c", filepath.Join(cfg, "waybar.jsonc"), "-s", filepath.Join(cfg, "waybar.css"))
 	if vnc := os.Getenv("LINUX_USE_VNC"); vnc != "off" && vnc != "" && os.Getenv("WLR_BACKENDS") == "headless" {
-		host, port, _ := net.SplitHostPort(vnc)
-		if spawn("wayvnc", "--render-cursor", "--disable-resizing", host, port) {
+		args := []string{"--render-cursor", "--disable-resizing"}
+		if sock, ok := strings.CutPrefix(vnc, "unix:"); ok {
+			os.Remove(sock)
+			args = append(args, "--unix-socket", sock)
+		} else {
+			host, port, _ := net.SplitHostPort(vnc)
+			args = append(args, host, port)
+		}
+		if spawn("wayvnc", args...) {
 			s.VNC = vnc
 		}
 	}
