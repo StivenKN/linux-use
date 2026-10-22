@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/StivenKN/linux-use/internal/desktop/gnome"
 	"github.com/StivenKN/linux-use/internal/session"
 )
 
@@ -30,6 +31,7 @@ func runDoctor() error {
 	}
 	info("target: %s (set LINUX_USE_TARGET=agent|window|desktop|wayland-N|:N to override)", session.Target())
 
+	backend := ""
 	s, err := session.Find(false)
 	if err != nil {
 		info("%v", err)
@@ -40,6 +42,7 @@ func runDoctor() error {
 		if err != nil {
 			bad("cannot drive %s: %v", s, err)
 		} else {
+			backend = b.Name()
 			ds, err := b.Displays(ctx)
 			if err == nil && len(ds) > 0 {
 				start := time.Now()
@@ -52,6 +55,17 @@ func runDoctor() error {
 				bad("%s backend: no displays: %v", b.Name(), err)
 			}
 			b.Close()
+		}
+	}
+
+	if backend == "gnome" {
+		fmt.Println("\nGNOME Shell extension (window list, focusing running apps, no typing into a terminal in front)")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if e, err := gnome.ExtensionStatus(ctx); err != nil {
+			bad("%v", err)
+		} else {
+			printExtension(e)
 		}
 	}
 
