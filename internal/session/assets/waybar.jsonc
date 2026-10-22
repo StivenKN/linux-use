@@ -1,0 +1,17 @@
+{
+  "layer": "top",
+  "position": "bottom",
+  "height": 32,
+  "spacing": 4,
+  "modules-left": ["custom/brand", "wlr/taskbar"],
+  "modules-right": ["clock"],
+  "custom/brand": { "format": "linux-use", "tooltip": false },
+  "wlr/taskbar": {
+    "format": "{icon} {title:.40}",
+    "icon-size": 16,
+    "on-click": "activate",
+    "on-click-middle": "close",
+    "tooltip-format": "{title}"
+  },
+  "clock": { "format": "{:%a %d %b  %H:%M}", "tooltip": false }
+}

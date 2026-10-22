@@ -1,0 +1,4 @@
+/dist/
+/plugin/bin/linux-use-*
+/.pr-assets/
+*.test

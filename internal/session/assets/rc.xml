@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!-- labwc config for the linux-use agent desktop. Generated on every start. -->
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+    <gap>0</gap>
+  </core>
+  <theme>
+    <cornerRadius>6</cornerRadius>
+    <font place="ActiveWindow" name="sans" size="10" weight="bold" />
+    <font place="InactiveWindow" name="sans" size="10" />
+    <font place="MenuItem" name="sans" size="10" />
+  </theme>
+  <placement>
+    <policy>cascade</policy>
+  </placement>
+  <focus>
+    <followMouse>no</followMouse>
+    <raiseOnFocus>yes</raiseOnFocus>
+  </focus>
+  <keyboard>
+    <default />
+    <keybind key="W-Return"><action name="Execute" command="foot" /></keybind>
+  </keyboard>
+  <mouse>
+    <default />
+  </mouse>
+</labwc_config>

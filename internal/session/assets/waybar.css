@@ -1,0 +1,6 @@
+* { font-family: sans-serif; font-size: 13px; min-height: 0; }
+window#waybar { background: rgba(17, 21, 28, 0.94); color: #d8dee9; }
+#custom-brand { padding: 0 14px; font-weight: bold; color: #88c0d0; }
+#taskbar button { padding: 0 10px; color: #d8dee9; border-radius: 0; border-bottom: 2px solid transparent; }
+#taskbar button.active { background: rgba(136, 192, 208, 0.16); border-bottom-color: #88c0d0; }
+#clock { padding: 0 14px; }
