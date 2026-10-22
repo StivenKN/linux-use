@@ -6,11 +6,12 @@
 //     works. No prompt; GNOME shows its screen-sharing indicator while the
 //     session is open.
 //   - displays: org.gnome.Mutter.DisplayConfig.
-//   - pixels: the org.freedesktop.portal.Screenshot portal, since
-//     org.gnome.Shell.Screenshot only serves allowlisted callers. The first
-//     capture shows GNOME's one-time "Allow … to Take Screenshots?" dialog,
-//     and every capture flashes the screen and plays the shutter sound (GNOME
-//     replies only after its 0.5 s flash animation).
+//   - pixels: the frames of those same ScreenCast streams, read over
+//     PipeWire (internal/pw). No prompt, flash or sound. If that fails, the
+//     org.freedesktop.portal.Screenshot portal is the fallback
+//     (org.gnome.Shell.Screenshot only serves allowlisted callers): it asks
+//     once ("Allow … to Take Screenshots?"), and every capture flashes the
+//     screen and plays the shutter sound.
 //
 // Windows are not exposed: org.gnome.Shell.Introspect is allowlisted too.
 package gnome
@@ -25,12 +26,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/godbus/dbus/v5"
 
 	"github.com/StivenKN/linux-use/internal/desktop"
 	"github.com/StivenKN/linux-use/internal/keys"
+	"github.com/StivenKN/linux-use/internal/pw"
 	"github.com/StivenKN/linux-use/internal/wl"
 )
 
@@ -50,16 +53,21 @@ type Backend struct {
 	bus  *dbus.Conn
 	sigs chan *dbus.Signal
 
-	mu      sync.Mutex    // guards the fields below, shared with the signal loop
-	rd      *remote       // live input session, opened on first use
-	stale   bool          // monitors changed since rd was opened
-	clip    string        // text we offer on the clipboard
-	ownClip bool          // whether Mutter still has our offer as the selection
-	served  dbus.Sequence // arrival of the latest clipboard read we answered
-	shot    *shot         // portal screenshot request still awaiting a reply
+	mu      sync.Mutex                 // guards the fields below, shared with the signal loop
+	rd      *remote                    // live input session, opened on first use
+	stale   bool                       // monitors changed since rd was opened
+	clip    string                     // text we offer on the clipboard
+	ownClip bool                       // whether Mutter still has our offer as the selection
+	served  dbus.Sequence              // arrival of the latest clipboard read we answered
+	shot    *shot                      // portal screenshot request still awaiting a reply
+	nodes   map[dbus.ObjectPath]uint32 // PipeWire node of each ScreenCast stream
+	nodeSig chan struct{}              // closed and replaced when nodes changes
 
 	servedCh chan struct{} // wakes paste when served advances
 	tokens   int           // portal request token counter
+	pw       *pw.Conn      // PipeWire connection, dialed on first capture
+	pwErr    error         // why the last PipeWire capture failed, if it did
+	input    time.Time     // when we last sent input, so captures can show its effect
 }
 
 // Open checks that display is served by Mutter and that its RemoteDesktop
@@ -85,9 +93,16 @@ func Open(display string) (*Backend, error) {
 		bus.Close()
 		return nil, fmt.Errorf("%w: %s is not on the session bus", desktop.ErrUnsupported, remoteDesktop)
 	}
-	b := &Backend{bus: bus, sigs: make(chan *dbus.Signal, 64), servedCh: make(chan struct{}, 1)}
+	b := &Backend{
+		bus:      bus,
+		sigs:     make(chan *dbus.Signal, 64),
+		servedCh: make(chan struct{}, 1),
+		nodes:    map[dbus.ObjectPath]uint32{},
+		nodeSig:  make(chan struct{}),
+	}
 	for _, m := range [][]dbus.MatchOption{
 		{dbus.WithMatchSender(remoteDesktop), dbus.WithMatchInterface(remoteDesktop + ".Session")},
+		{dbus.WithMatchInterface(screenCast + ".Stream"), dbus.WithMatchMember("PipeWireStreamAdded")},
 		{dbus.WithMatchInterface(displayConfig), dbus.WithMatchMember("MonitorsChanged")},
 		{dbus.WithMatchInterface("org.freedesktop.portal.Request"), dbus.WithMatchMember("Response")},
 	} {
@@ -128,6 +143,9 @@ func (b *Backend) Close() error {
 	b.mu.Unlock()
 	if rd != nil {
 		rd.stop()
+	}
+	if b.pw != nil {
+		b.pw.Close()
 	}
 	b.dropShot()
 	return b.bus.Close()
@@ -219,7 +237,7 @@ type monitorID struct{ Connector, Vendor, Product, Serial string }
 // Move warps the pointer through the ScreenCast stream of the monitor under
 // (x, y); stream coordinates are that monitor's device pixels.
 func (b *Backend) Move(ctx context.Context, x, y int) error {
-	return b.notify(ctx, func(r *remote) error {
+	return b.inject(ctx, func(r *remote) error {
 		d, stream := r.at(x, y)
 		px := float64(min(max(x-d.X, 0), d.Width-1)) * d.Scale
 		py := float64(min(max(y-d.Y, 0), d.Height-1)) * d.Scale
@@ -236,13 +254,13 @@ func (b *Backend) Move(ctx context.Context, x, y int) error {
 }
 
 func (b *Backend) Button(ctx context.Context, btn desktop.Button, down bool) error {
-	return b.notify(ctx, func(r *remote) error {
+	return b.inject(ctx, func(r *remote) error {
 		return r.press(ctx, "NotifyPointerButton", int32(btn), down)
 	})
 }
 
 func (b *Backend) Scroll(ctx context.Context, dx, dy int) error {
-	return b.notify(ctx, func(r *remote) error {
+	return b.inject(ctx, func(r *remote) error {
 		if dy != 0 {
 			if err := r.call(ctx, "NotifyPointerAxisDiscrete", uint32(0), int32(dy)); err != nil {
 				return err
@@ -258,7 +276,7 @@ func (b *Backend) Scroll(ctx context.Context, dx, dy int) error {
 // Key presses or releases a keysym. Mutter maps it onto the active layout,
 // adding Shift or AltGr itself, and silently drops keysyms the layout lacks.
 func (b *Backend) Key(ctx context.Context, sym keys.Keysym, down bool) error {
-	return b.notify(ctx, func(r *remote) error {
+	return b.inject(ctx, func(r *remote) error {
 		return r.press(ctx, "NotifyKeyboardKeysym", uint32(sym), down)
 	})
 }
@@ -270,7 +288,7 @@ func (b *Backend) Type(ctx context.Context, text string) error {
 	if strings.ContainsFunc(text, func(r rune) bool { return r > unicode.MaxASCII }) {
 		return b.paste(ctx, text)
 	}
-	return b.notify(ctx, func(r *remote) error {
+	return b.inject(ctx, func(r *remote) error {
 		for _, ch := range text {
 			sym := uint32(keys.FromRune(ch))
 			if err := r.press(ctx, "NotifyKeyboardKeysym", sym, true); err != nil {

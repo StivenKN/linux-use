@@ -31,8 +31,29 @@ type shotResult struct {
 	at   time.Time
 }
 
-// Capture takes a full-screen screenshot through the portal and crops it to d.
+// Capture reads the display's ScreenCast stream over PipeWire, falling back
+// to the screenshot portal if that fails.
 func (b *Backend) Capture(ctx context.Context, d desktop.Display) (*image.RGBA, error) {
+	img, err := b.capturePipeWire(ctx, d)
+	if err == nil {
+		b.pwErr = nil
+		return img, nil
+	}
+	if ctx.Err() != nil {
+		return nil, err
+	}
+	if b.pwErr == nil {
+		fmt.Fprintf(os.Stderr, "linux-use: PipeWire capture failed, using the screenshot portal: %v\n", err)
+	}
+	b.pwErr = err
+	return b.capturePortal(ctx, d)
+}
+
+// PipeWireErr reports why the last capture fell back to the portal, if it did.
+func (b *Backend) PipeWireErr() error { return b.pwErr }
+
+// capturePortal takes a full-screen screenshot through the portal and crops it to d.
+func (b *Backend) capturePortal(ctx context.Context, d desktop.Display) (*image.RGBA, error) {
 	start := time.Now()
 	ds, err := b.Displays(ctx)
 	if err != nil {

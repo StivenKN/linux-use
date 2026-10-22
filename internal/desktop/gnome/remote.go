@@ -10,6 +10,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/StivenKN/linux-use/internal/desktop"
+	"github.com/StivenKN/linux-use/internal/pw"
 )
 
 // remote is one Mutter RemoteDesktop session plus the linked ScreenCast
@@ -20,6 +21,7 @@ type remote struct {
 	rd, sc   dbus.BusObject
 	displays []desktop.Display
 	streams  []dbus.ObjectPath // parallel to displays
+	caps     []*pw.Stream      // PipeWire consumers of streams, started on first capture; guarded by Backend.mu
 	closed   bool              // Mutter ended it; guarded by Backend.mu
 }
 
@@ -42,6 +44,17 @@ func (b *Backend) notify(ctx context.Context, f func(*remote) error) error {
 	return nil
 }
 
+// inject is notify for input that may change the screen: it records when
+// the input was sent, so the next capture can wait for its effect.
+func (b *Backend) inject(ctx context.Context, f func(*remote) error) error {
+	defer func() {
+		b.mu.Lock()
+		b.input = time.Now()
+		b.mu.Unlock()
+	}()
+	return b.notify(ctx, f)
+}
+
 func (b *Backend) remote(ctx context.Context) (*remote, error) {
 	b.mu.Lock()
 	r := b.rd
@@ -54,6 +67,11 @@ func (b *Backend) remote(ctx context.Context) (*remote, error) {
 	b.mu.Unlock()
 	if r != nil {
 		r.stop()
+		b.mu.Lock()
+		for _, p := range r.streams {
+			delete(b.nodes, p)
+		}
+		b.mu.Unlock()
 	}
 	r, err := b.open(ctx)
 	if err != nil {
@@ -106,6 +124,7 @@ func (b *Backend) open(ctx context.Context) (*remote, error) {
 		}
 		r.streams = append(r.streams, stream)
 	}
+	r.caps = make([]*pw.Stream, len(r.streams))
 	if err := r.call(ctx, "Start"); err != nil {
 		return nil, fmt.Errorf("RemoteDesktop.Start: %w", err)
 	}
@@ -153,8 +172,14 @@ func (r *remote) release(method string, code any) error {
 	return r.call(ctx, method, code, false)
 }
 
-// stop ends the session; Mutter tears down the linked ScreenCast session.
+// stop ends the session; Mutter tears down the linked ScreenCast session
+// and its PipeWire streams.
 func (r *remote) stop() {
+	for _, s := range r.caps {
+		if s != nil {
+			s.Close()
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	r.call(ctx, "Stop")
@@ -199,6 +224,8 @@ func (b *Backend) loop() {
 				b.ownClip = false
 			}
 			b.mu.Unlock()
+		case screenCast + ".Stream.PipeWireStreamAdded":
+			b.streamAdded(sig)
 		case displayConfig + ".MonitorsChanged":
 			b.mu.Lock()
 			b.stale = true

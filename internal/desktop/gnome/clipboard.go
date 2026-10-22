@@ -123,7 +123,7 @@ func (b *Backend) paste(ctx context.Context, text string) error {
 	// Mutter's clipboard manager reads every new selection right away, so
 	// only a read requested after our "v" press reached Mutter is the paste.
 	var pressed dbus.Sequence
-	err := b.notify(ctx, func(r *remote) error {
+	err := b.inject(ctx, func(r *remote) error {
 		const key = "NotifyKeyboardKeysym"
 		ctrl, v := uint32(keys.ControlL), uint32('v')
 		if err := r.press(ctx, key, ctrl, true); err != nil {

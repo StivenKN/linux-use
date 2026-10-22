@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"image/png"
 	"os"
 	"strconv"
@@ -37,17 +38,26 @@ func runDebug(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(ds)
-	case "shot":
+	case "shot": // shot FILE [N]: N captures 300 ms apart, timing each
 		ds, err := b.Displays(ctx)
 		if err != nil {
 			return err
 		}
-		start := time.Now()
-		img, err := b.Capture(ctx, ds[0])
-		if err != nil {
-			return err
+		n := 1
+		if len(args) > 2 {
+			n = atoi(args[2])
 		}
-		fmt.Fprintf(os.Stderr, "captured %v in %v\n", img.Bounds().Size(), time.Since(start))
+		var img *image.RGBA
+		for i := range n {
+			if i > 0 {
+				time.Sleep(300 * time.Millisecond)
+			}
+			start := time.Now()
+			if img, err = b.Capture(ctx, ds[0]); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "captured %v in %v\n", img.Bounds().Size(), time.Since(start))
+		}
 		f, err := os.Create(args[1])
 		if err != nil {
 			return err
