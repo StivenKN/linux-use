@@ -1,0 +1,20 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: check tag matches plugin version
+        run: test "v$(jq -r .version plugin/.claude-plugin/plugin.json)" = "$GITHUB_REF_NAME"
+      - run: make dist VERSION="${GITHUB_REF_NAME#v}"
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

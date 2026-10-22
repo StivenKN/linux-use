@@ -1,0 +1,12 @@
+{
+  "name": "linux-use",
+  "version": "0.1.0",
+  "description": "Computer use for Claude Code on Linux. Claude sees the screen and drives the mouse, keyboard, apps, windows and clipboard on Wayland (wlroots, GNOME) and X11, or in a private headless agent desktop on servers.",
+  "author": {
+    "name": "StivenKN"
+  },
+  "homepage": "https://github.com/StivenKN/linux-use",
+  "repository": "https://github.com/StivenKN/linux-use",
+  "license": "MIT",
+  "keywords": ["computer-use", "linux", "wayland", "x11", "desktop", "automation", "browser", "mcp"]
+}

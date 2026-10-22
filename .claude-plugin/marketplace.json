@@ -1,0 +1,16 @@
+{
+  "name": "linux-use",
+  "owner": {
+    "name": "StivenKN"
+  },
+  "metadata": {
+    "description": "Computer use for Claude Code on Linux: Wayland, X11, and a headless agent desktop for servers."
+  },
+  "plugins": [
+    {
+      "name": "linux-use",
+      "source": "./plugin",
+      "description": "Let Claude see and drive Linux desktops: screenshots, mouse, keyboard, apps, windows and clipboard. Wayland first, X11 too, with a headless agent desktop for servers."
+    }
+  ]
+}

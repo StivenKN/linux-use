@@ -2,13 +2,15 @@ package wl
 
 import (
 	"encoding/binary"
+	"fmt"
 	"sort"
 	"sync"
 )
 
 // Toplevel is a window reported by zwlr_foreign_toplevel_manager_v1.
 type Toplevel struct {
-	ID         uint32
+	ID         uint32 // short sequential id, stable for the window's lifetime
+	handle     uint32
 	Title      string
 	AppID      string
 	Activated  bool
@@ -19,9 +21,10 @@ type Toplevel struct {
 
 // Toplevels tracks every window the compositor exposes.
 type Toplevels struct {
-	c  *Conn
-	mu sync.Mutex
-	m  map[uint32]*Toplevel // committed state, updated on each done event
+	c    *Conn
+	mu   sync.Mutex
+	m    map[uint32]*Toplevel // by short id; committed state, updated on each done event
+	next uint32
 }
 
 // TrackToplevels binds the wlr foreign toplevel manager. Call Roundtrip
@@ -40,8 +43,12 @@ func TrackToplevels(c *Conn) (*Toplevels, error) {
 	return t, nil
 }
 
-func (t *Toplevels) handle(id uint32) Handler {
-	pending := &Toplevel{ID: id}
+func (t *Toplevels) handle(handle uint32) Handler {
+	t.mu.Lock()
+	t.next++
+	id := t.next
+	t.mu.Unlock()
+	pending := &Toplevel{ID: id, handle: handle}
 	return func(op uint16, e *Event) {
 		switch op {
 		case 0:
@@ -72,7 +79,7 @@ func (t *Toplevels) handle(id uint32) Handler {
 			t.mu.Lock()
 			delete(t.m, id)
 			t.mu.Unlock()
-			t.c.Request(id, 7).Send() // destroy
+			t.c.Request(handle, 7).Send() // destroy
 		}
 	}
 }
@@ -91,9 +98,28 @@ func (t *Toplevels) List() []Toplevel {
 
 // Activate focuses and raises a window, unminimizing it first.
 func (t *Toplevels) Activate(id, seat uint32) error {
-	t.c.Request(id, 3).Send() // unset_minimized
-	return t.c.Request(id, 4).Uint(seat).Send()
+	h, err := t.lookup(id)
+	if err != nil {
+		return err
+	}
+	t.c.Request(h, 3).Send() // unset_minimized
+	return t.c.Request(h, 4).Uint(seat).Send()
 }
 
 // Close asks a window to close.
-func (t *Toplevels) Close(id uint32) error { return t.c.Request(id, 5).Send() }
+func (t *Toplevels) Close(id uint32) error {
+	h, err := t.lookup(id)
+	if err != nil {
+		return err
+	}
+	return t.c.Request(h, 5).Send()
+}
+
+func (t *Toplevels) lookup(id uint32) (uint32, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if w, ok := t.m[id]; ok {
+		return w.handle, nil
+	}
+	return 0, fmt.Errorf("no window with id %d", id)
+}

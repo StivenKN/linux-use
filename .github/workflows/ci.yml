@@ -1,0 +1,20 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - run: CGO_ENABLED=0 GOARCH=arm64 go build ./cmd/linux-use
+      - name: plugin version matches launcher
+        run: |
+          v=$(jq -r .version plugin/.claude-plugin/plugin.json)
+          grep -q "^VERSION=$v\$" plugin/bin/linux-use

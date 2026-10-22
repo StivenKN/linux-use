@@ -1,0 +1,59 @@
+#!/bin/sh
+# Launcher for the linux-use binary. The plugin ships this script, not the
+# binary: on first run it downloads the release matching this plugin version
+# and CPU, verifies its checksum, and caches it under ~/.cache/linux-use.
+#
+# Overrides: LINUX_USE_BIN=/path/to/linux-use runs a local build instead.
+set -eu
+
+VERSION=0.1.0
+REPO=StivenKN/linux-use
+
+if [ -n "${LINUX_USE_BIN:-}" ]; then
+  exec "$LINUX_USE_BIN" "$@"
+fi
+
+if [ "$(uname -s)" != Linux ]; then
+  echo "linux-use: this plugin brings computer use to Linux; on $(uname -s) use Claude Code's built-in computer use instead." >&2
+  exit 1
+fi
+
+case "$(uname -m)" in
+  x86_64 | amd64) arch=amd64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) echo "linux-use: unsupported CPU $(uname -m) (amd64 and arm64 are supported)" >&2; exit 1 ;;
+esac
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# A binary next to this script (developer builds, offline installs) wins.
+if [ -x "$here/linux-use-$arch" ]; then
+  exec "$here/linux-use-$arch" "$@"
+fi
+
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/linux-use/$VERSION"
+bin="$cache/linux-use-$arch"
+if [ ! -x "$bin" ]; then
+  mkdir -p "$cache"
+  url="https://github.com/$REPO/releases/download/v$VERSION"
+  tmp="$bin.download.$$"
+  trap 'rm -f "$tmp" "$tmp.sums"' EXIT
+  fetch() {
+    if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 2 -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" "$1"
+    else echo "linux-use: need curl or wget to download the binary" >&2; return 1
+    fi
+  }
+  echo "linux-use: downloading v$VERSION for linux/$arch…" >&2
+  fetch "$url/linux-use-linux-$arch" "$tmp" || { echo "linux-use: download failed from $url" >&2; exit 1; }
+  if fetch "$url/checksums.txt" "$tmp.sums" && command -v sha256sum >/dev/null 2>&1; then
+    want=$(grep " linux-use-linux-$arch\$" "$tmp.sums" | cut -d' ' -f1)
+    got=$(sha256sum "$tmp" | cut -d' ' -f1)
+    if [ -z "$want" ] || [ "$want" != "$got" ]; then
+      echo "linux-use: checksum mismatch for the downloaded binary; refusing to run it" >&2
+      exit 1
+    fi
+  fi
+  chmod +x "$tmp"
+  mv -f "$tmp" "$bin"
+fi
+exec "$bin" "$@"

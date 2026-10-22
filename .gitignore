@@ -2,3 +2,4 @@
 /plugin/bin/linux-use-*
 /.pr-assets/
 *.test
+/.claude/worktrees/

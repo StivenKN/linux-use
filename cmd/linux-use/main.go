@@ -10,7 +10,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/StivenKN/linux-use/internal/computer"
 	"github.com/StivenKN/linux-use/internal/desktop"
+	"github.com/StivenKN/linux-use/internal/mcpserver"
 	"github.com/StivenKN/linux-use/internal/session"
 )
 
@@ -25,6 +27,11 @@ func main() {
 	switch os.Args[1] {
 	case "desktop":
 		err = runDesktop(os.Args[2:])
+	case "mcp":
+		c := computer.New(connect)
+		err = mcpserver.New(c, version).Run(context.Background())
+	case "doctor":
+		err = runDoctor()
 	case "debug":
 		err = runDebug(os.Args[2:])
 	case "version", "--version", "-v":
@@ -98,12 +105,17 @@ func printStatus(s session.Session) {
 	}
 }
 
-// connect finds the session and opens the first backend that can drive it.
+// connect finds (or starts) the session and opens a backend for it.
 func connect(ctx context.Context) (desktop.Backend, session.Session, error) {
 	s, err := session.Find(true)
 	if err != nil {
 		return nil, s, err
 	}
+	return connectTo(s)
+}
+
+// connectTo opens the first backend that can drive s.
+func connectTo(s session.Session) (desktop.Backend, session.Session, error) {
 	var reasons []string
 	for _, open := range backends {
 		b, err := open(s)

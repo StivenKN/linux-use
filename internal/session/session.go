@@ -48,6 +48,13 @@ func (s Session) Env() []string {
 		return s.Managed && k == "XDG_CURRENT_DESKTOP"
 	})
 	env = append(env, "XDG_RUNTIME_DIR="+RuntimeDir())
+	// Apps that find no session bus misbehave (Firefox can't reach its
+	// running instance and reports "already running").
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		if bus := filepath.Join(RuntimeDir(), "bus"); socketExists(bus) {
+			env = append(env, "DBUS_SESSION_BUS_ADDRESS=unix:path="+bus)
+		}
+	}
 	if s.Wayland != "" {
 		env = append(env, "WAYLAND_DISPLAY="+s.Wayland, "XDG_SESSION_TYPE=wayland")
 	}
@@ -144,6 +151,11 @@ func RuntimeDir() string {
 	os.MkdirAll(d, 0o700)
 	os.Setenv("XDG_RUNTIME_DIR", d)
 	return d
+}
+
+func socketExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Mode()&os.ModeSocket != 0
 }
 
 // WaylandSockets lists Wayland sockets in the runtime dir that accept connections.

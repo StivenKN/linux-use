@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "computer-use": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/linux-use",
+      "args": ["mcp"]
+    }
+  }
+}
