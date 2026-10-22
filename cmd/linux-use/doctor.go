@@ -28,7 +28,7 @@ func runDoctor() error {
 	if socks := session.WaylandSockets(); len(socks) > 0 {
 		info("Wayland sockets in %s: %s", session.RuntimeDir(), strings.Join(socks, ", "))
 	}
-	info("target: %s (set LINUX_USE_TARGET=agent|desktop|wayland-N|:N to override)", session.Target())
+	info("target: %s (set LINUX_USE_TARGET=agent|window|desktop|wayland-N|:N to override)", session.Target())
 
 	s, err := session.Find(false)
 	if err != nil {
