@@ -122,6 +122,9 @@ func Find(start bool) (Session, error) {
 		return s, nil
 	}
 	if target == "desktop" {
+		if d := os.Getenv("WAYLAND_DISPLAY"); d != "" {
+			return Session{}, fmt.Errorf("%w: Wayland socket %s is not accepting connections and DISPLAY is unset (LINUX_USE_TARGET=desktop)", ErrNoSession, d)
+		}
 		return Session{}, fmt.Errorf("%w: WAYLAND_DISPLAY and DISPLAY are unset (LINUX_USE_TARGET=desktop)", ErrNoSession)
 	}
 	return agent(start, false)

@@ -12,17 +12,21 @@ import (
 
 	"github.com/StivenKN/linux-use/internal/desktop"
 	"github.com/StivenKN/linux-use/internal/keys"
+	"github.com/StivenKN/linux-use/internal/pw"
 )
 
 // runDebug exposes raw backend operations for manual testing:
 //
-//	linux-use debug displays|shot FILE|move X Y|click X Y|type TEXT|key COMBO|windows|activate ID|clip [TEXT]
+//	linux-use debug displays|shot FILE [N]|pw NODE FILE|move X Y|click X Y|type TEXT|key COMBO|windows|activate ID|clip [TEXT]
 func runDebug(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: linux-use debug displays|shot FILE|move X Y|click X Y|type TEXT|key COMBO|windows|activate ID|clip [TEXT]")
+		return fmt.Errorf("usage: linux-use debug displays|shot FILE [N]|pw NODE FILE|move X Y|click X Y|type TEXT|key COMBO|windows|activate ID|clip [TEXT]")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if args[0] == "pw" { // pw NODE FILE: capture any PipeWire video node, no desktop needed
+		return pwShot(ctx, args[1:])
+	}
 	b, sess, err := connect(ctx)
 	if err != nil {
 		return err
@@ -125,4 +129,36 @@ func runDebug(args []string) error {
 		return err
 	}
 	return fmt.Errorf("unknown debug command %q", args[0])
+}
+
+// pwShot captures one frame from a PipeWire video node by its global id.
+func pwShot(ctx context.Context, args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("usage: linux-use debug pw NODE FILE")
+	}
+	node, err := strconv.ParseUint(args[0], 10, 32)
+	if err != nil {
+		return err
+	}
+	start := time.Now()
+	c, err := pw.Dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	s, err := c.Capture(ctx, uint32(node))
+	if err != nil {
+		return err
+	}
+	img, err := s.Frame(ctx, time.Time{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "captured %v in %v\n", img.Bounds().Size(), time.Since(start))
+	f, err := os.Create(args[1])
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
 }
