@@ -167,7 +167,7 @@ func agent(start, window bool) (Session, error) {
 }
 
 // Fallback starts the agent desktop for a session no backend can drive
-// (e.g. KDE): as a window inside it, so the user still sees Claude work.
+// (e.g. GNOME on Wayland): as a window inside it, so the user still sees Claude work.
 func Fallback(s Session) (Session, error) {
 	if Target() != "auto" || s.Managed {
 		return Session{}, ErrNoSession

@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/StivenKN/linux-use/internal/desktop"
+	"github.com/StivenKN/linux-use/internal/desktop/kde"
 	"github.com/StivenKN/linux-use/internal/desktop/wlr"
 	"github.com/StivenKN/linux-use/internal/desktop/x11"
 	"github.com/StivenKN/linux-use/internal/session"
@@ -15,6 +16,12 @@ var backends = []func(session.Session) (desktop.Backend, error){
 			return nil, desktop.ErrUnsupported
 		}
 		return wlr.Open(s.Wayland)
+	},
+	func(s session.Session) (desktop.Backend, error) {
+		if s.Wayland == "" {
+			return nil, desktop.ErrUnsupported
+		}
+		return kde.Open(s.Wayland) // tells KWin apart by its globals, so XDG_CURRENT_DESKTOP needn't say KDE
 	},
 	func(s session.Session) (desktop.Backend, error) {
 		if s.X11 == "" {
