@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -138,6 +140,20 @@ func (b *Backend) open(ctx context.Context) (*remote, error) {
 	// so Mutter logs it and presses nothing) and give clients a moment.
 	if err := r.call(ctx, "NotifyPointerMotionRelative", 0.0, 0.0); err != nil {
 		return nil, err
+	}
+	// Without a physical pointer the pointer has no position until an
+	// absolute motion gives it one, and until then a popup's grab (say, GNOME
+	// Web's address bar suggestions) can keep catching every later click.
+	// Mutter centers a physical pointer at startup; do the same when every
+	// monitor is virtual (Mutter names those Meta-N), so a pointer someone
+	// is holding never jumps.
+	if !slices.ContainsFunc(ds, func(d desktop.Display) bool { return !strings.HasPrefix(d.Name, "Meta-") }) {
+		d := ds[0]
+		for range 2 { // see Move
+			if err := r.call(ctx, "NotifyPointerMotionAbsolute", string(r.streams[0]), float64(d.Width)*d.Scale/2, float64(d.Height)*d.Scale/2); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := r.call(ctx, "NotifyKeyboardKeysym", uint32(0xffffff), true); err != nil {
 		return nil, err
