@@ -4,7 +4,7 @@
 
 **Computer use for Claude Code on Linux.** Claude takes screenshots and drives the mouse, keyboard, apps, windows and clipboard of a Linux desktop, on Wayland or X11. On a server with no screen, it gets a private headless desktop with a real browser that you can watch and take over through VNC.
 
-![Claude filled and submitted a web form in Firefox on the linux-use agent desktop](assets/demo.png)
+![Claude Code on a headless Ubuntu server: it opens Firefox on the agent desktop, searches Wikipedia, and reads the section it was asked about](assets/demo.gif)
 
 Claude Code's built-in computer use is macOS-only. linux-use is a community plugin that brings the same tool surface to Linux. It isn't a fork or a patched Claude Code: it installs into your normal `claude` like any other plugin.
 
