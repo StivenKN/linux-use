@@ -36,7 +36,7 @@ Claude Code asks before every MCP tool call. For computer use, that means a prom
 | --- | --- |
 | in a terminal on your Linux desktop | **your desktop**. It asks for per-app access first, like on macOS. |
 | over SSH, on a server, or in a container | **the agent desktop**: a private headless Wayland desktop (labwc) with a taskbar, a browser and a terminal, started on demand. |
-| on a desktop linux-use can't drive yet (e.g. KDE) | **the agent desktop, as a window** on your screen. |
+| on a desktop linux-use can't drive directly | **the agent desktop, as a window** on your screen. |
 
 `LINUX_USE_TARGET` overrides the choice:
 
@@ -62,9 +62,12 @@ open vnc://localhost:5900                                  # macOS; any VNC view
 | --- | --- | --- | --- | --- | --- |
 | **wlroots Wayland**: sway, labwc, Hyprland, river, Wayfire, niri… | ✓ wlr-screencopy / ext-image-copy-capture | ✓ virtual pointer + keyboard | ✓ | ✓ | none |
 | **X11**: Xfce, Cinnamon, MATE, i3, Openbox, GNOME/KDE on Xorg… | ✓ | ✓ XTEST | ✓ EWMH | ✓ | none |
-| **GNOME (Wayland)** | in progress | in progress | | | |
+| **GNOME (Wayland)** | ✓ screenshot portal ¹ | ✓ Mutter RemoteDesktop | — ² | ✓ | none |
 | **KDE Plasma (Wayland)** | uses the agent desktop in a window for now | | | | |
 | **Agent desktop** (headless labwc) | ✓ | ✓ | ✓ | ✓ | `labwc wayvnc waybar swaybg foot xwayland` |
+
+¹ GNOME asks once ("Allow apps to take screenshots?") and remembers the answer. It flashes the screen and plays the shutter sound on every capture, which adds about half a second. While Claude is in control, GNOME shows its screen-sharing indicator. Text the keyboard layout can't type (emoji, accents, Cyrillic) is pasted, and your clipboard is restored afterwards.
+² GNOME doesn't let apps list windows, so `list_windows` isn't available there. Claude uses `open_application` and screenshots instead.
 
 The binary speaks every protocol itself, so there's no `grim`, `wtype`, `xdotool` or `ydotool` to install. Typing works with any keyboard layout, and emoji, accents and CJK are typed as-is.
 
