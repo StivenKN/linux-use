@@ -78,8 +78,8 @@ func (t *Toplevels) handle(handle uint32) Handler {
 		case 6: // closed
 			t.mu.Lock()
 			delete(t.m, id)
-			t.mu.Unlock()
 			t.c.Request(handle, 7).Send() // destroy
+			t.mu.Unlock()
 			t.c.Forget(handle)
 		}
 	}
@@ -99,28 +99,25 @@ func (t *Toplevels) List() []Toplevel {
 
 // Activate focuses and raises a window, unminimizing it first.
 func (t *Toplevels) Activate(id, seat uint32) error {
-	h, err := t.lookup(id)
-	if err != nil {
-		return err
-	}
-	t.c.Request(h, 3).Send() // unset_minimized
-	return t.c.Request(h, 4).Uint(seat).Send()
+	return t.with(id, func(h uint32) error {
+		t.c.Request(h, 3).Send() // unset_minimized
+		return t.c.Request(h, 4).Uint(seat).Send()
+	})
 }
 
 // Close asks a window to close.
 func (t *Toplevels) Close(id uint32) error {
-	h, err := t.lookup(id)
-	if err != nil {
-		return err
-	}
-	return t.c.Request(h, 5).Send()
+	return t.with(id, func(h uint32) error { return t.c.Request(h, 5).Send() })
 }
 
-func (t *Toplevels) lookup(id uint32) (uint32, error) {
+// with runs f on a live handle while holding the lock, so the reader
+// goroutine can't destroy it between lookup and send.
+func (t *Toplevels) with(id uint32, f func(handle uint32) error) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if w, ok := t.m[id]; ok {
-		return w.handle, nil
+	w, ok := t.m[id]
+	if !ok {
+		return fmt.Errorf("no window with id %d", id)
 	}
-	return 0, fmt.Errorf("no window with id %d", id)
+	return f(w.handle)
 }

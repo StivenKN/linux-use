@@ -234,7 +234,7 @@ func (c *Conn) handleDisplay(op uint16, e *Event) {
 	switch op {
 	case 0: // error
 		obj, code, msg := e.Uint(), e.Uint(), e.Str()
-		go c.fail(fmt.Errorf("wayland protocol error on object %d (code %d): %s", obj, code, msg))
+		c.fail(fmt.Errorf("wayland protocol error on object %d (code %d): %s", obj, code, msg))
 	case 1: // delete_id
 		id := e.Uint()
 		c.mu.Lock()

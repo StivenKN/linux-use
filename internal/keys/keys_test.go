@@ -38,3 +38,26 @@ func TestUSStrokes(t *testing.T) {
 		t.Error("US layout should not produce CJK")
 	}
 }
+
+func TestParseChords(t *testing.T) {
+	got, err := ParseChords("ctrl + alt + Delete")
+	if err != nil || len(got) != 1 || !slices.Equal(got[0], []Keysym{ControlL, AltL, Delete}) {
+		t.Errorf("spaced chord = %v, %v", got, err)
+	}
+	got, err = ParseChords("ctrl+a Delete")
+	if err != nil || len(got) != 2 {
+		t.Errorf("sequence = %v, %v", got, err)
+	}
+}
+
+func TestExtraCodesAvoidUS(t *testing.T) {
+	free := 0
+	for c := ExtraFirst; c <= ExtraLast; c++ {
+		if !IsUSCode(c) {
+			free++
+		}
+	}
+	if free < 40 {
+		t.Errorf("only %d spare keycodes", free)
+	}
+}

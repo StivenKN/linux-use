@@ -4,6 +4,7 @@ package keys
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -150,6 +151,29 @@ func ParseCombo(combo string) ([]Keysym, error) {
 		syms = append(syms, s)
 	}
 	return syms, nil
+}
+
+// spacedPlus matches "+" with surrounding spaces, as in "ctrl + c".
+var spacedPlus = regexp.MustCompile(`\s*\+\s*`)
+
+// ParseChords parses one or more space-separated chords ("ctrl+a Delete").
+// Spaces around "+" are ignored, so "ctrl + alt + Delete" is one chord.
+// Every caller (gates and actions) uses this, so what is checked is exactly
+// what gets pressed.
+func ParseChords(s string) ([][]Keysym, error) {
+	s = spacedPlus.ReplaceAllString(strings.TrimSpace(s), "+")
+	var chords [][]Keysym
+	for _, f := range strings.Fields(s) {
+		syms, err := ParseCombo(f)
+		if err != nil {
+			return nil, err
+		}
+		chords = append(chords, syms)
+	}
+	if len(chords) == 0 {
+		return nil, fmt.Errorf("no key given")
+	}
+	return chords, nil
 }
 
 // ModMask returns the XKB real-modifier bit a modifier keysym drives

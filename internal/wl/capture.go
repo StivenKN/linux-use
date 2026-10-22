@@ -111,6 +111,11 @@ func CaptureExt(ctx context.Context, c *Conn, srcMgr, copyMgr, shm, output uint3
 			}
 		case 5: // stopped
 			stopped = true
+			select {
+			case <-constraints:
+			default:
+				close(constraints)
+			}
 		}
 	})
 	defer c.Request(session, 1).Send()
@@ -158,6 +163,9 @@ func CaptureExt(ctx context.Context, c *Conn, srcMgr, copyMgr, shm, output uint3
 		}
 	})
 	defer c.Request(frame, 0).Send()
+	if err := c.Request(session, 0).Uint(frame).Send(); err != nil { // create_frame
+		return nil, err
+	}
 	c.Request(frame, 1).Uint(buf.ID).Send()                                       // attach_buffer
 	c.Request(frame, 2).Int(0).Int(0).Int(int32(width)).Int(int32(height)).Send() // damage_buffer
 	if err := c.Request(frame, 3).Send(); err != nil {                            // capture

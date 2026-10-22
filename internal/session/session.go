@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // Session is a graphical session the agent can drive.
@@ -17,6 +18,7 @@ type Session struct {
 	X11     string `json:"display,omitempty"`         // DISPLAY value
 	Desktop string `json:"desktop,omitempty"`         // XDG_CURRENT_DESKTOP
 	Managed bool   `json:"managed,omitempty"`         // the linux-use agent desktop
+	PID     int    `json:"pid,omitempty"`             // agent desktop compositor, as seen by its socket
 	VNC     string `json:"vnc,omitempty"`             // host:port of the viewer (managed only)
 }
 
@@ -185,10 +187,24 @@ func RuntimeDir() string {
 		os.Setenv("XDG_RUNTIME_DIR", d)
 		return d
 	}
+	// No runtime dir (rare: su, cron, some containers). Use a private dir in
+	// /tmp, refusing one another user could have planted.
 	d = filepath.Join(os.TempDir(), fmt.Sprintf("linux-use-runtime-%d", os.Getuid()))
-	os.MkdirAll(d, 0o700)
+	os.Mkdir(d, 0o700)
+	if !ownedPrivateDir(d) {
+		d, _ = os.MkdirTemp("", "linux-use-runtime-")
+	}
 	os.Setenv("XDG_RUNTIME_DIR", d)
 	return d
+}
+
+func ownedPrivateDir(path string) bool {
+	st, err := os.Lstat(path)
+	if err != nil || !st.IsDir() || st.Mode().Perm()&0o077 != 0 {
+		return false
+	}
+	sys, ok := st.Sys().(*syscall.Stat_t)
+	return ok && int(sys.Uid) == os.Getuid()
 }
 
 func socketExists(path string) bool {

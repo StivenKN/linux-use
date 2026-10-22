@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/StivenKN/linux-use/internal/wl"
 )
 
@@ -66,10 +68,32 @@ func Running() (Session, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return Session{}, err
 	}
-	if s.Wayland == "" || !socketAlive(s.Wayland) {
+	// The socket name alone isn't proof: after a crash, another compositor
+	// (the user's own desktop) may own it. Check who is listening.
+	if pid, err := peerPID(s.Wayland); err != nil || s.PID == 0 || pid != s.PID {
 		return Session{}, errors.New("agent desktop is not running")
 	}
 	return s, nil
+}
+
+// peerPID returns the pid of the process serving a Wayland socket.
+func peerPID(display string) (int, error) {
+	c, err := net.DialTimeout("unix", wl.SocketPath(display), time.Second)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	raw, err := c.(*net.UnixConn).SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var cred *unix.Ucred
+	var credErr error
+	raw.Control(func(fd uintptr) { cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) })
+	if credErr != nil {
+		return 0, credErr
+	}
+	return int(cred.Pid), nil
 }
 
 // Compositor returns the compositor binary we can run, preferring labwc.
@@ -88,17 +112,30 @@ func Up(opts Options) (Session, error) {
 	if s, err := Running(); err == nil {
 		return s, nil
 	}
+	// Serialize starts: two Claude sessions using computer use for the first
+	// time at once must not start two desktops.
+	dir := StateDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return Session{}, err
+	}
+	lockf, err := os.OpenFile(filepath.Join(dir, "up.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return Session{}, err
+	}
+	defer lockf.Close()
+	if err := unix.Flock(int(lockf.Fd()), unix.LOCK_EX); err != nil {
+		return Session{}, err
+	}
+	if s, err := Running(); err == nil {
+		return s, nil
+	}
+	// Whatever is left of a previous desktop is stale now.
+	Down()
 	opts.defaults()
 	comp, err := Compositor()
 	if err != nil {
 		return Session{}, err
 	}
-	dir := StateDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Session{}, err
-	}
-	os.Remove(statePath())
-	os.Remove(pidPath())
 	cfg, err := writeConfig(dir, opts)
 	if err != nil {
 		return Session{}, err
@@ -171,7 +208,7 @@ func vncSetting(o Options) string {
 // launch runs the compositor outside our process tree so it outlives the MCP
 // server: as a transient systemd user unit when possible, else detached.
 func launch(argv []string, env map[string]string, nested bool) error {
-	if _, err := exec.LookPath("systemd-run"); err == nil && !nested {
+	if !nested && systemdUser() {
 		args := []string{"--user", "--unit=" + unit, "--collect", "--quiet",
 			"--property=KillMode=control-group", "--property=TimeoutStopSec=5"}
 		for k, v := range env {
@@ -180,11 +217,10 @@ func launch(argv []string, env map[string]string, nested bool) error {
 		args = append(args, "--")
 		args = append(args, argv...)
 		exec.Command("systemctl", "--user", "reset-failed", unit).Run()
-		out, err := exec.Command("systemd-run", args...).CombinedOutput()
-		if err == nil {
-			return nil
+		if out, err := exec.Command("systemd-run", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("start agent desktop: systemd-run: %v: %s", err, strings.TrimSpace(string(out)))
 		}
-		fmt.Fprintf(os.Stderr, "linux-use: systemd-run failed (%v: %s), starting directly\n", err, strings.TrimSpace(string(out)))
+		return nil
 	}
 	logf, err := os.OpenFile(filepath.Join(StateDir(), "compositor.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -211,8 +247,16 @@ func launch(argv []string, env map[string]string, nested bool) error {
 	return cmd.Process.Release()
 }
 
+// systemdUser reports whether a systemd user manager can run our unit.
+func systemdUser() bool {
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		return false
+	}
+	return exec.Command("systemctl", "--user", "show-environment").Run() == nil
+}
+
 func logHint() string {
-	if _, err := exec.LookPath("systemd-run"); err == nil {
+	if systemdUser() {
 		return "journalctl --user -u " + unit
 	}
 	return filepath.Join(StateDir(), "compositor.log")
@@ -254,7 +298,11 @@ func Hook() error {
 		}
 	}
 
-	s := Session{Wayland: display, X11: os.Getenv("DISPLAY"), Desktop: os.Getenv("XDG_CURRENT_DESKTOP"), Managed: true}
+	pid, err := peerPID(display)
+	if err != nil {
+		return fmt.Errorf("find compositor: %w", err)
+	}
+	s := Session{Wayland: display, X11: os.Getenv("DISPLAY"), Desktop: os.Getenv("XDG_CURRENT_DESKTOP"), Managed: true, PID: pid}
 	spawn := func(name string, args ...string) bool {
 		if _, err := exec.LookPath(name); err != nil {
 			return false

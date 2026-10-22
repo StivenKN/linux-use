@@ -2,6 +2,7 @@ package computer
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"math"
@@ -61,17 +62,33 @@ func zoomSize(w, h int) (int, int) {
 	return fit(w*2, h*2)
 }
 
-// shotFor returns the geometry a screenshot of d would have.
+// shotFor returns the geometry a screenshot of d would have. Like Claude
+// Code, it fits the physical pixels, so HiDPI screens keep more detail.
 func shotFor(d desktop.Display) Shot {
-	w, h := fit(d.Width, d.Height)
+	scale := d.Scale
+	if scale <= 0 {
+		scale = 1
+	}
+	w, h := fit(int(math.Round(float64(d.Width)*scale)), int(math.Round(float64(d.Height)*scale)))
 	return Shot{Display: d, Width: w, Height: h}
 }
 
-// ToScreen converts image coordinates to global logical screen coordinates.
+// ToScreen converts image coordinates to global logical screen coordinates,
+// clamped to the display.
 func (s Shot) ToScreen(x, y float64) (int, int) {
 	sx := float64(s.Display.Width) / float64(s.Width)
 	sy := float64(s.Display.Height) / float64(s.Height)
-	return s.Display.X + int(math.Round(x*sx)), s.Display.Y + int(math.Round(y*sy))
+	lx := min(max(int(math.Round(x*sx)), 0), s.Display.Width-1)
+	ly := min(max(int(math.Round(y*sy)), 0), s.Display.Height-1)
+	return s.Display.X + lx, s.Display.Y + ly
+}
+
+// Check rejects coordinates outside the screenshot.
+func (s Shot) Check(p Point) error {
+	if p.X < 0 || p.Y < 0 || p.X > float64(s.Width) || p.Y > float64(s.Height) {
+		return fmt.Errorf("coordinate [%g, %g] is outside the coordinate frame (%dx%d) — coordinates are pixels in the most recent screenshot. Take a new screenshot and pick a point inside it.", p.X, p.Y, s.Width, s.Height)
+	}
+	return nil
 }
 
 // FromScreen converts global logical coordinates to image coordinates.

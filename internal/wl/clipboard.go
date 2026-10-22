@@ -72,14 +72,11 @@ func (cb *Clipboard) handleDevice(op uint16, e *Event) {
 // replace swaps the current offer in slot and destroys the old one.
 func (cb *Clipboard) replace(slot *uint32, id uint32) {
 	cb.mu.Lock()
+	defer cb.mu.Unlock()
 	old := *slot
 	*slot = id
-	keep := old == cb.selection || old == cb.primary
-	if old != 0 && !keep {
+	if old != 0 && old != cb.selection && old != cb.primary {
 		delete(cb.offers, old)
-	}
-	cb.mu.Unlock()
-	if old != 0 && !keep {
 		cb.c.Request(old, 1).Send() // offer.destroy
 		cb.c.Forget(old)
 	}
@@ -93,8 +90,8 @@ func (cb *Clipboard) Read(ctx context.Context) (string, error) {
 	cb.mu.Lock()
 	offer := cb.selection
 	mimes := cb.offers[offer]
-	cb.mu.Unlock()
 	if offer == 0 {
+		cb.mu.Unlock()
 		return "", nil
 	}
 	mime := ""
@@ -105,13 +102,17 @@ func (cb *Clipboard) Read(ctx context.Context) (string, error) {
 		}
 	}
 	if mime == "" {
+		cb.mu.Unlock()
 		return "", nil
 	}
 	var p [2]int
 	if err := unix.Pipe2(p[:], unix.O_CLOEXEC); err != nil {
+		cb.mu.Unlock()
 		return "", err
 	}
+	// Send while holding the lock so the offer can't be destroyed meanwhile.
 	err := cb.c.Request(offer, 0).String(mime).FD(p[1]).Send()
+	cb.mu.Unlock()
 	unix.Close(p[1])
 	if err != nil {
 		unix.Close(p[0])

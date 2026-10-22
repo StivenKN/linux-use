@@ -296,8 +296,8 @@ func (c *Computer) moveTo(ctx context.Context, b desktop.Backend, p Point) error
 	if err != nil {
 		return err
 	}
-	if p.X < 0 || p.Y < 0 || p.X > float64(shot.Width) || p.Y > float64(shot.Height) {
-		return fmt.Errorf("coordinate [%g, %g] is outside the coordinate frame (%dx%d) — coordinates are pixels in the most recent screenshot. Take a new screenshot and pick a point inside it.", p.X, p.Y, shot.Width, shot.Height)
+	if err := shot.Check(p); err != nil {
+		return err
 	}
 	x, y := shot.ToScreen(p.X, p.Y)
 	if err := b.Move(ctx, x, y); err != nil {
@@ -331,10 +331,13 @@ func (c *Computer) Click(ctx context.Context, p *Point, button desktop.Button, c
 				if i > 0 {
 					time.Sleep(40 * time.Millisecond)
 				}
-				if err := b.Button(ctx, button, true); err != nil {
-					return err
+				err := b.Button(ctx, button, true)
+				// Release even if the press failed to flush (e.g. the call
+				// was cancelled): the press may still have gone out.
+				if rerr := b.Button(context.WithoutCancel(ctx), button, false); err == nil {
+					err = rerr
 				}
-				if err := b.Button(ctx, button, false); err != nil {
+				if err != nil {
 					return err
 				}
 			}
@@ -380,13 +383,16 @@ func (c *Computer) Drag(ctx context.Context, from *Point, to Point, mods string)
 			}
 			time.Sleep(settle)
 		}
+		if err := shot.Check(to); err != nil {
+			return err
+		}
 		start := c.cursor
 		ex, ey := shot.ToScreen(to.X, to.Y)
 		return c.withMods(ctx, b, mods, func() error {
+			defer b.Button(context.WithoutCancel(ctx), desktop.Left, false)
 			if err := b.Button(ctx, desktop.Left, true); err != nil {
 				return err
 			}
-			defer b.Button(context.WithoutCancel(ctx), desktop.Left, false)
 			time.Sleep(settle)
 			dx, dy := float64(ex-start.X), float64(ey-start.Y)
 			dur := min(math.Hypot(dx, dy)/2000, 0.5) // seconds, like the built-in tools
@@ -442,16 +448,9 @@ func (c *Computer) Type(ctx context.Context, text string) error {
 // Key presses a chord like "ctrl+shift+t" repeat times. Space-separated
 // chords ("ctrl+a Delete") are pressed in sequence.
 func (c *Computer) Key(ctx context.Context, combos string, repeat int) error {
-	var chords [][]keys.Keysym
-	for _, f := range strings.Fields(combos) {
-		syms, err := keys.ParseCombo(f)
-		if err != nil {
-			return err
-		}
-		chords = append(chords, syms)
-	}
-	if len(chords) == 0 {
-		return errors.New("no key given")
+	chords, err := keys.ParseChords(combos)
+	if err != nil {
+		return err
 	}
 	return c.do(ctx, func(b desktop.Backend) error {
 		for i := range max(repeat, 1) {
@@ -470,11 +469,14 @@ func (c *Computer) Key(ctx context.Context, combos string, repeat int) error {
 
 // HoldKey holds a chord down for d.
 func (c *Computer) HoldKey(ctx context.Context, combo string, d time.Duration) error {
-	syms, err := keys.ParseCombo(combo)
+	chords, err := keys.ParseChords(combo)
 	if err != nil {
 		return err
 	}
-	return c.do(ctx, func(b desktop.Backend) error { return chord(ctx, b, syms, d) })
+	if len(chords) != 1 {
+		return fmt.Errorf("hold_key takes one chord, got %q", combo)
+	}
+	return c.do(ctx, func(b desktop.Backend) error { return chord(ctx, b, chords[0], d) })
 }
 
 // chord presses syms in order, waits hold, and releases them in reverse,
@@ -487,10 +489,10 @@ func chord(ctx context.Context, b desktop.Backend, syms []keys.Keysym, hold time
 		}
 	}()
 	for _, s := range syms {
+		pressed = append(pressed, s) // released by the defer even if the press errors
 		if err := b.Key(ctx, s, true); err != nil {
 			return err
 		}
-		pressed = append(pressed, s)
 	}
 	if hold > 0 {
 		select {
@@ -501,11 +503,11 @@ func chord(ctx context.Context, b desktop.Backend, syms []keys.Keysym, hold time
 	return nil
 }
 
+// withMods holds the modifier keys in mods (e.g. "ctrl+shift") around f.
+// Only modifiers are accepted: anything else would let a click or scroll
+// type keys.
 func (c *Computer) withMods(ctx context.Context, b desktop.Backend, mods string, f func() error) error {
-	if strings.TrimSpace(mods) == "" {
-		return f()
-	}
-	syms, err := keys.ParseCombo(mods)
+	syms, err := Modifiers(mods)
 	if err != nil {
 		return err
 	}
@@ -516,12 +518,33 @@ func (c *Computer) withMods(ctx context.Context, b desktop.Backend, mods string,
 		}
 	}()
 	for _, s := range syms {
+		pressed = append(pressed, s)
 		if err := b.Key(ctx, s, true); err != nil {
 			return err
 		}
-		pressed = append(pressed, s)
 	}
 	return f()
+}
+
+// Modifiers parses a modifier chord such as "ctrl+shift" for clicks, drags
+// and scrolls, rejecting non-modifier keys. "" is no modifiers.
+func Modifiers(mods string) ([]keys.Keysym, error) {
+	if strings.TrimSpace(mods) == "" {
+		return nil, nil
+	}
+	chords, err := keys.ParseChords(mods)
+	if err != nil {
+		return nil, err
+	}
+	if len(chords) != 1 {
+		return nil, fmt.Errorf("modifiers must be one chord like \"ctrl+shift\", got %q", mods)
+	}
+	for _, s := range chords[0] {
+		if keys.ModMask(s) == 0 {
+			return nil, fmt.Errorf("%q is not a modifier; text on clicks, drags and scrolls holds modifier keys only (shift, ctrl, alt, super)", mods)
+		}
+	}
+	return chords[0], nil
 }
 
 // CursorPosition returns the pointer in last-screenshot coordinates. Wayland

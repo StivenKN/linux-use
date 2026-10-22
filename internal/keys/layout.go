@@ -67,6 +67,12 @@ func US(sym Keysym) (Stroke, bool) {
 	return s, ok
 }
 
+// IsUSCode reports whether the US layout table already uses an evdev code.
+func IsUSCode(code uint32) bool {
+	_, ok := usKeys[code]
+	return ok
+}
+
 // ExtraCodes is the evdev keycode range used to bind keysyms the US layout
 // lacks (emoji, accents, CJK) when we control the keymap.
 const (
@@ -88,7 +94,7 @@ func Keymap(extra map[Keysym]uint32) string {
 	for sym, code := range extra {
 		entries = append(entries, entry{code, [2]Keysym{sym}})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].code < entries[j].code })
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].code < entries[j].code })
 
 	var kc, sy strings.Builder
 	for _, e := range entries {

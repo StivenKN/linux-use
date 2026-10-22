@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,8 +25,10 @@ type Server struct {
 	c        *computer.Computer
 	grants   *grants
 	handlers map[string]handler
-	agent    bool   // started expecting the agent desktop; shapes tool descriptions
-	lastShot string // display of the previous screenshot, for the monitor note
+	agent    bool // started expecting the agent desktop; shapes tool descriptions
+
+	mu       sync.Mutex // tool calls run concurrently
+	lastShot string     // display of the previous screenshot, for the monitor note
 }
 
 // New builds the server around a Computer.
@@ -93,6 +96,10 @@ func (s *Server) screenshot(ctx context.Context) (*mcp.CallToolResult, error) {
 		return nil, err
 	}
 	res := &mcp.CallToolResult{}
+	s.mu.Lock()
+	prev := s.lastShot
+	s.lastShot = img.Shot.Display.Name
+	s.mu.Unlock()
 	if ds, err := s.c.Displays(ctx); err == nil && len(ds) > 1 {
 		name := img.Shot.Display.Name
 		var others []string
@@ -102,13 +109,12 @@ func (s *Server) screenshot(ctx context.Context) (*mcp.CallToolResult, error) {
 			}
 		}
 		note := fmt.Sprintf("This screenshot was taken on monitor %q", name)
-		if s.lastShot != "" && s.lastShot != name {
-			note += fmt.Sprintf(", which is different from your previous screenshot (taken on %q)", s.lastShot)
+		if prev != "" && prev != name {
+			note += fmt.Sprintf(", which is different from your previous screenshot (taken on %q)", prev)
 		}
 		note += fmt.Sprintf(". Other attached monitors: %s. Use switch_display to capture a different monitor.", strings.Join(others, ", "))
 		res.Content = append(res.Content, &mcp.TextContent{Text: note})
 	}
-	s.lastShot = img.Shot.Display.Name
 	res.Content = append(res.Content, imageContent(img))
 	return res, nil
 }
@@ -136,16 +142,11 @@ func (s *Server) click(ctx context.Context, b desktop.Button, count int, a coord
 		return nil, err
 	}
 	need := actClick
-	if b != desktop.Left || strings.TrimSpace(a.Text) != "" {
+	if b != desktop.Left {
 		need = actFullMouse
 	}
-	if err := s.gate(ctx, need); err != nil {
+	if err := s.gateMods(ctx, need, a.Text); err != nil {
 		return nil, err
-	}
-	if a.Text != "" {
-		if err := s.gateKeys(ctx, a.Text); err != nil {
-			return nil, err
-		}
 	}
 	if err := s.c.Click(ctx, p, b, count, a.Text); err != nil {
 		return nil, err
@@ -161,7 +162,7 @@ func (s *Server) scroll(ctx context.Context, a scrollArgs) (*mcp.CallToolResult,
 	if a.ScrollAmount < 0 || a.ScrollAmount > 100 {
 		return nil, errors.New("scroll_amount must be between 0 and 100")
 	}
-	if err := s.gate(ctx, actClick); err != nil {
+	if err := s.gateMods(ctx, actClick, a.Text); err != nil {
 		return nil, err
 	}
 	if err := s.c.Scroll(ctx, p, a.ScrollDirection, a.ScrollAmount, a.Text); err != nil {
@@ -181,7 +182,7 @@ func (s *Server) drag(ctx context.Context, a dragArgs) (*mcp.CallToolResult, err
 			return nil, err
 		}
 	}
-	if err := s.gate(ctx, actFullMouse); err != nil {
+	if err := s.gateMods(ctx, actFullMouse, a.Text); err != nil {
 		return nil, err
 	}
 	if err := s.c.Drag(ctx, from, *to, a.Text); err != nil {

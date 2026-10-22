@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -79,7 +80,9 @@ func (b *Backend) init() error {
 
 	b.shm, _, _ = c.BindFirst("wl_shm", 1, nil)
 	b.seat, _, _ = c.BindFirst("wl_seat", 1, nil)
-	if c.Has("zwlr_screencopy_manager_v1") {
+	// LINUX_USE_CAPTURE=ext forces ext-image-copy-capture when both are offered (for testing).
+	preferExt := os.Getenv("LINUX_USE_CAPTURE") == "ext" && c.Has("ext_image_copy_capture_manager_v1")
+	if c.Has("zwlr_screencopy_manager_v1") && !preferExt {
 		b.wlrCopy, _, _ = c.BindFirst("zwlr_screencopy_manager_v1", 3, nil)
 	} else {
 		var err error
@@ -222,9 +225,15 @@ func (b *Backend) stroke(sym keys.Keysym) (keys.Stroke, error) {
 	if code, ok := b.extra[sym]; ok {
 		return keys.Stroke{Code: code}, nil
 	}
+	for keys.IsUSCode(b.nextExtra) {
+		b.nextExtra++
+	}
 	if b.nextExtra > keys.ExtraLast {
 		clear(b.extra)
 		b.nextExtra = keys.ExtraFirst
+		for keys.IsUSCode(b.nextExtra) {
+			b.nextExtra++
+		}
 	}
 	code := b.nextExtra
 	b.nextExtra++

@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/StivenKN/linux-use/internal/apps"
+	"github.com/StivenKN/linux-use/internal/computer"
 	"github.com/StivenKN/linux-use/internal/desktop"
 	"github.com/StivenKN/linux-use/internal/keys"
 )
@@ -51,7 +52,7 @@ const (
 var terminalTokens = []string{
 	"terminal", "console", "konsole", "kitty", "alacritty", "wezterm", "ghostty", "foot", "footclient",
 	"xterm", "uxterm", "urxvt", "rxvt", "tilix", "terminator", "kgx", "ptyxis", "guake", "yakuake",
-	"sakura", "qterminal", "lxterminal", "terminology", "contour", "blackbox", "tabby", "hyper", "warp", "term",
+	"sakura", "qterminal", "lxterminal", "terminology", "contour", "blackbox", "tabby", "hyper", "warp", "term", "st",
 	"code", "codium", "vscodium", "cursor", "windsurf", "zed", "jetbrains", "sublime", "emacs", "neovide", "gvim",
 }
 
@@ -260,6 +261,9 @@ func (s *Server) gate(ctx context.Context, a action) error {
 	}
 	ws, err := s.c.Windows(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return nil // the backend can't see windows; the grant itself is the consent
 	}
 	i := slices.IndexFunc(ws, func(w desktop.Window) bool { return w.Focused })
@@ -350,16 +354,29 @@ func (s *Server) gateKeys(ctx context.Context, combos string) error {
 	if s.agentDesktop(ctx) || s.flags().SystemKeys {
 		return nil
 	}
-	for _, f := range strings.Fields(combos) {
-		syms, err := keys.ParseCombo(f)
-		if err != nil {
-			return err
-		}
+	chords, err := keys.ParseChords(combos)
+	if err != nil {
+		return err
+	}
+	for _, syms := range chords {
 		if isSystemCombo(syms) {
-			return fmt.Errorf("%q is a system-level shortcut. Request the `systemKeyCombos` grant via request_access to use it.", f)
+			return fmt.Errorf("%q is a system-level shortcut. Request the `systemKeyCombos` grant via request_access to use it.", combos)
 		}
 	}
 	return nil
+}
+
+// gateMods checks a pointer action that may hold modifier keys (the text
+// parameter of clicks, scrolls and drags). Holding modifiers needs tier
+// "full", and system combos need their grant.
+func (s *Server) gateMods(ctx context.Context, a action, mods string) error {
+	if strings.TrimSpace(mods) == "" {
+		return s.gate(ctx, a)
+	}
+	if _, err := computer.Modifiers(mods); err != nil {
+		return err
+	}
+	return s.gateKeys(ctx, mods)
 }
 
 func isSystemCombo(syms []keys.Keysym) bool {
