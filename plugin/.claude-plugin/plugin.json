@@ -1,6 +1,6 @@
 {
   "name": "linux-use",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Computer use for Claude Code on Linux. Claude sees the screen and drives the mouse, keyboard, apps, windows and clipboard on Wayland (wlroots, GNOME, KDE Plasma) and X11, or in a private headless agent desktop on servers.",
   "author": {
     "name": "StivenKN"

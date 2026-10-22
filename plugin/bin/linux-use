@@ -6,7 +6,7 @@
 # Overrides: LINUX_USE_BIN=/path/to/linux-use runs a local build instead.
 set -eu
 
-VERSION=0.2.0
+VERSION=0.2.1
 REPO=StivenKN/linux-use
 
 if [ -n "${LINUX_USE_BIN:-}" ]; then
