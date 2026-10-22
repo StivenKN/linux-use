@@ -95,9 +95,15 @@ const (
 // frame into shared memory, so this bounds the cost while the screen changes.
 const MaxFrameRate = 30
 
+// ErrNoFrame reports that the producer never delivered a frame.
+var ErrNoFrame = errors.New("no frame from PipeWire")
+
 // Stream receives one video node's frames through a client-node whose input
 // port is linked to the producer. It holds on to the newest frame's buffer
 // until the next one arrives, so pixels are only copied when asked for.
+//
+// Shared memory is only touched under mu, and a mapping is released only
+// after it was swapped out under mu, so nothing reads memory that is gone.
 type Stream struct {
 	c    *Conn
 	id   uint32 // client-node proxy
@@ -108,13 +114,13 @@ type Stream struct {
 	formatPod []byte             // the negotiated Format, echoed in port updates
 	mixes     map[uint32]*mix    // one per link to our input port
 	act       []byte             // our pw_node_activation
+	actBlk    *memBlock          // act's mapping
 	targets   map[uint32]*target // nodes to signal when we finish a cycle
 	wake      *os.File           // eventfd the graph signals us on
 	wakeDone  chan struct{}      // closed when the wake goroutine exits
 	held      *frameRef          // newest frame, kept out of the producer's hands
-	frames    uint64
-	last      time.Time
-	fresh     chan struct{} // closed and replaced on every new frame
+	last      time.Time          // when held arrived
+	changed   chan struct{}      // closed and replaced on a frame, the transport or failure
 	err       error
 	closeOnce sync.Once
 }
@@ -127,7 +133,9 @@ type videoFormat struct {
 
 type mix struct {
 	ios     [][]byte // spa_io_buffers slots shared with the producer
+	ioBlk   *memBlock
 	buffers []buffer
+	bufBlks []*memBlock // mappings behind buffers
 }
 
 type buffer struct {
@@ -143,6 +151,7 @@ type frameRef struct {
 type target struct {
 	fd  int
 	act []byte
+	blk *memBlock
 }
 
 // Capture links a new client-node to the output of the given node (a global
@@ -152,7 +161,7 @@ func (c *Conn) Capture(ctx context.Context, node uint32) (*Stream, error) {
 		c:       c,
 		mixes:   map[uint32]*mix{},
 		targets: map[uint32]*target{},
-		fresh:   make(chan struct{}),
+		changed: make(chan struct{}),
 	}
 	c.mu.Lock()
 	c.streams[s] = struct{}{}
@@ -195,15 +204,14 @@ func (s *Stream) start(ctx context.Context, node uint32) error {
 	if err := s.portUpdate(); err != nil {
 		return err
 	}
-	var a builder
-	if err := s.c.send(s.id, cnSetActive, a.Struct(func() { a.Bool(true) }).bytes()); err != nil {
-		return err
-	}
-	global, err := s.c.globalID(ctx, s.id)
+	// Activate and link only once the transport set our activation version,
+	// so the server never schedules us under the other protocol.
+	global, err := s.registered(ctx)
 	if err != nil {
 		return err
 	}
-	if err := s.Err(); err != nil {
+	var a builder
+	if err := s.c.send(s.id, cnSetActive, a.Struct(func() { a.Bool(true) }).bytes()); err != nil {
 		return err
 	}
 	s.link = s.c.newObject(proxy{event: s.linkEvent, fail: s.fail})
@@ -214,8 +222,34 @@ func (s *Stream) start(ctx context.Context, node uint32) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.Frame(ctx, time.Time{})
-	return err
+	return s.settle(ctx, time.Time{})
+}
+
+// registered waits for our node's global id and its transport.
+func (s *Stream) registered(ctx context.Context) (uint32, error) {
+	for {
+		s.c.mu.Lock()
+		global, bound := s.c.bound[s.id]
+		boundSig := s.c.boundSig
+		s.c.mu.Unlock()
+		s.mu.Lock()
+		ready, changed, err := s.act != nil, s.changed, s.err
+		s.mu.Unlock()
+		switch {
+		case err != nil:
+			return 0, err
+		case bound && ready:
+			return global, nil
+		}
+		select {
+		case <-boundSig:
+		case <-changed:
+		case <-s.c.closed:
+			return 0, s.c.err
+		case <-ctx.Done():
+			return 0, fmt.Errorf("PipeWire didn't set up the capture node: %w", ctx.Err())
+		}
+	}
 }
 
 // Close unlinks the stream and releases everything it holds. Safe to call twice.
@@ -230,11 +264,14 @@ func (s *Stream) Close() error {
 			s.c.destroy(s.id)
 		}
 		s.mu.Lock()
-		for id, t := range s.targets {
-			unix.Close(t.fd)
-			delete(s.targets, id)
+		for id := range s.mixes {
+			s.dropMix(id)
 		}
-		s.mixes, s.held, s.act = map[uint32]*mix{}, nil, nil
+		for id := range s.targets {
+			s.dropTarget(id)
+		}
+		s.c.unref(s.actBlk)
+		s.act, s.actBlk = nil, nil
 		s.mu.Unlock()
 		s.c.mu.Lock()
 		delete(s.c.streams, s)
@@ -257,9 +294,14 @@ func (s *Stream) fail(err error) {
 	defer s.mu.Unlock()
 	if s.err == nil {
 		s.err = err
-		close(s.fresh)
-		s.fresh = make(chan struct{})
+		s.signal()
 	}
+}
+
+// signal wakes everything waiting on s.changed. Callers hold s.mu.
+func (s *Stream) signal() {
+	close(s.changed)
+	s.changed = make(chan struct{})
 }
 
 // How Frame decides the screen has settled after input.
@@ -275,22 +317,49 @@ const (
 // change inside that window sent as a follow-up), and apps repaint a few
 // frames after input arrives. So after recent input, Frame waits until
 // frames stop coming for settleQuiet; otherwise only for a follow-up frame
-// that may still be due.
+// that may still be due. Without a frame (at first, or after the buffers
+// were renegotiated) it waits for one until ctx ends.
 func (s *Stream) Frame(ctx context.Context, input time.Time) (*image.RGBA, error) {
+	if err := s.settle(ctx, input); err != nil {
+		return nil, err
+	}
+	// Copy the plane under the lock, which keeps the producer from getting
+	// the buffer back, and convert it after, so a cycle isn't held up.
+	s.mu.Lock()
+	if s.err != nil {
+		s.mu.Unlock()
+		return nil, s.err
+	}
+	if s.held == nil {
+		s.mu.Unlock()
+		return nil, ErrNoFrame
+	}
+	f := s.format
+	pix, err := copyPlane(s.held.mix.buffers[s.held.id], f)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	toRGBA(pix, f.format)
+	return &image.RGBA{Pix: pix, Stride: f.width * 4, Rect: image.Rect(0, 0, f.width, f.height)}, nil
+}
+
+// settle waits as Frame describes.
+func (s *Stream) settle(ctx context.Context, input time.Time) error {
 	var deadline, idle time.Time
 	for {
 		s.mu.Lock()
-		n, last, fresh, err := s.frames, s.last, s.fresh, s.err
+		have, last, changed, err := s.held != nil, s.last, s.changed, s.err
 		followUp := s.format.interval + 10*time.Millisecond
 		s.mu.Unlock()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		until := time.Now().Add(time.Hour) // the first frame; ctx bounds it
-		if n > 0 {
+		until := time.Now().Add(time.Hour) // no frame yet; ctx bounds it
+		if have {
 			quiet := followUp
 			if deadline.IsZero() {
-				deadline, idle = time.Now().Add(followUp), time.Time{}
+				deadline = time.Now().Add(followUp)
 				if time.Since(input) < settleLimit {
 					deadline, idle = input.Add(settleLimit), input.Add(settleIdle)
 				}
@@ -308,60 +377,52 @@ func (s *Stream) Frame(ctx context.Context, input time.Time) (*image.RGBA, error
 		}
 		wait := time.Until(until)
 		if wait <= 0 {
-			break
+			return nil
 		}
 		t := time.NewTimer(wait)
 		select {
-		case <-fresh:
+		case <-changed:
 		case <-t.C:
 		case <-ctx.Done():
 			t.Stop()
-			if n == 0 {
-				return nil, fmt.Errorf("no frame from PipeWire: %w", ctx.Err())
+			if !have {
+				return fmt.Errorf("%w: %w", ErrNoFrame, ctx.Err())
 			}
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
 		t.Stop()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.held == nil {
-		return nil, errors.New("PipeWire stream has no frame")
-	}
-	return s.copyFrame(s.held.mix.buffers[s.held.id])
 }
 
-// copyFrame converts a buffer to RGBA. Callers hold s.mu.
-func (s *Stream) copyFrame(b buffer) (*image.RGBA, error) {
-	f := s.format
+// copyPlane copies a frame's rows out of shared memory, dropping the
+// stride padding. Callers hold s.mu.
+func copyPlane(b buffer, f videoFormat) ([]byte, error) {
 	offset, size, stride := le.Uint32(b.chunk), le.Uint32(b.chunk[4:]), int(int32(le.Uint32(b.chunk[8:])))
+	row := f.width * 4
 	if stride == 0 {
-		stride = f.width * 4
+		stride = row
 	}
 	offset %= uint32(len(b.data))
-	if stride < f.width*4 || uint64(offset)+uint64(stride)*uint64(f.height-1)+uint64(f.width*4) > uint64(len(b.data)) ||
-		uint64(size) < uint64(stride)*uint64(f.height-1)+uint64(f.width*4) {
+	need := uint64(stride)*uint64(f.height-1) + uint64(row)
+	if stride < row || uint64(offset)+need > uint64(len(b.data)) || uint64(size) < need {
 		return nil, fmt.Errorf("PipeWire frame of %d bytes (stride %d) doesn't hold %dx%d pixels", size, stride, f.width, f.height)
 	}
-	img := image.NewRGBA(image.Rect(0, 0, f.width, f.height))
-	src := b.data[offset:]
+	src, pix := b.data[offset:], make([]byte, row*f.height)
 	for y := range f.height {
-		row, out := src[y*stride:y*stride+f.width*4], img.Pix[y*img.Stride:]
-		switch f.format {
-		case videoBGRx, videoBGRA:
-			for x := 0; x < len(row); x += 4 {
-				out[x], out[x+1], out[x+2], out[x+3] = row[x+2], row[x+1], row[x], 0xff
-			}
-		default: // RGBx, RGBA
-			for x := 0; x < len(row); x += 4 {
-				out[x], out[x+1], out[x+2], out[x+3] = row[x], row[x+1], row[x+2], 0xff
-			}
-		}
+		copy(pix[y*row:(y+1)*row], src[y*stride:])
 	}
-	return img, nil
+	return pix, nil
+}
+
+// toRGBA converts packed 32-bit pixels to opaque RGBA in place.
+func toRGBA(pix []byte, format uint32) {
+	bgr := format == videoBGRx || format == videoBGRA
+	for i := 0; i+3 < len(pix); i += 4 {
+		if bgr {
+			pix[i], pix[i+2] = pix[i+2], pix[i]
+		}
+		pix[i+3] = 0xff
+	}
 }
 
 // portUpdate tells the server about our input port: the formats we accept,
@@ -463,8 +524,8 @@ func (s *Stream) event(op uint8, f *fields, m *message) {
 			s.mu.Lock()
 			if peer == invalidID {
 				s.dropMix(mixID)
-			} else if s.mixes[mixID] == nil {
-				s.mixes[mixID] = &mix{}
+			} else {
+				s.mix(mixID)
 			}
 			s.mu.Unlock()
 		}
@@ -492,7 +553,7 @@ func (s *Stream) transport(read int, memID, offset, size uint32) error {
 	if read < 0 {
 		return errors.New("transport without an eventfd")
 	}
-	act, err := s.c.mapMem(memID, offset, size)
+	act, blk, err := s.c.mapMem(memID, offset, size)
 	if err == nil && len(act) < actMinSize {
 		err = fmt.Errorf("activation record of %d bytes", len(act))
 	}
@@ -500,6 +561,7 @@ func (s *Stream) transport(read int, memID, offset, size uint32) error {
 		err = unix.SetNonblock(read, true)
 	}
 	if err != nil {
+		s.c.unref(blk)
 		unix.Close(read)
 		return err
 	}
@@ -512,10 +574,13 @@ func (s *Stream) transport(read int, memID, offset, size uint32) error {
 	s.mu.Lock()
 	if s.err != nil { // closed meanwhile
 		s.mu.Unlock()
+		s.c.unref(blk)
 		wake.Close()
 		return nil
 	}
-	s.act, s.wake, s.wakeDone = act, wake, done
+	s.c.unref(s.actBlk)
+	s.act, s.actBlk, s.wake, s.wakeDone = act, blk, wake, done
+	s.signal()
 	s.mu.Unlock()
 	go s.run(wake, done)
 	return nil
@@ -535,7 +600,9 @@ func (s *Stream) stopWake() {
 func (s *Stream) setFormat(p pod) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.clearBuffers()
+	for _, m := range s.mixes {
+		s.clearBuffers(m)
+	}
 	s.formatPod = nil
 	if p.typ != typeObject {
 		return nil // format cleared
@@ -572,6 +639,23 @@ func (s *Stream) useBuffers(f *fields) error {
 	if n > 64 {
 		return fmt.Errorf("%d buffers", n)
 	}
+	bufs, blks, err := s.mapBuffers(f, n)
+	if err != nil {
+		s.c.unref(blks...)
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.mix(mixID)
+	s.clearBuffers(m)
+	m.buffers, m.bufBlks = bufs, blks
+	return nil
+}
+
+// mapBuffers reads n buffer descriptions and maps their memory. It returns
+// the mappings it made even on error, for the caller to release.
+func (s *Stream) mapBuffers(f *fields, n uint32) ([]buffer, []*memBlock, error) {
+	var blks []*memBlock
 	bufs := make([]buffer, 0, n)
 	for range n {
 		memID, offset, size, nMetas := f.Uint(), f.Uint(), f.Uint(), f.Uint()
@@ -582,29 +666,31 @@ func (s *Stream) useBuffers(f *fields) error {
 		}
 		nDatas := f.Uint()
 		if err := f.Err(); err != nil {
-			return err
+			return nil, blks, err
 		}
-		region, err := s.c.mapMem(memID, offset, size)
+		region, blk, err := s.c.mapMem(memID, offset, size)
 		if err != nil {
-			return err
+			return nil, blks, err
 		}
+		blks = append(blks, blk)
 		var b buffer
 		for j := range nDatas {
 			typ, dataID, _, mapOffset, maxSize := f.ID(), f.Uint(), f.Uint(), f.Uint(), f.Uint()
 			if err := f.Err(); err != nil {
-				return err
+				return nil, blks, err
 			}
 			if j > 0 {
 				continue // packed RGB has one plane
 			}
 			chunk := uint64(metas) + 16*uint64(j)
 			if chunk+16 > uint64(len(region)) {
-				return errors.New("buffer chunk outside its memory")
+				return nil, blks, errors.New("buffer chunk outside its memory")
 			}
 			b.chunk = region[chunk : chunk+16]
 			switch typ {
 			case dataMemID:
-				b.data, err = s.c.mapMem(dataID, mapOffset, maxSize)
+				b.data, blk, err = s.c.mapMem(dataID, mapOffset, maxSize)
+				blks = append(blks, blk)
 			case dataMemPtr:
 				if uint64(dataID)+uint64(maxSize) > uint64(len(region)) {
 					err = errors.New("buffer data outside its memory")
@@ -615,30 +701,20 @@ func (s *Stream) useBuffers(f *fields) error {
 				err = fmt.Errorf("buffer data type %d", typ)
 			}
 			if err != nil {
-				return err
+				return nil, blks, err
 			}
 		}
 		if len(b.data) == 0 {
-			return errors.New("buffer without data")
+			return nil, blks, errors.New("buffer without data")
 		}
 		bufs = append(bufs, b)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m := s.mixes[mixID]
-	if m == nil {
-		m = &mix{}
-		s.mixes[mixID] = m
-	}
-	if s.held != nil && s.held.mix == m {
-		s.held = nil
-	}
-	m.buffers = bufs
-	return nil
+	return bufs, blks, nil
 }
 
 func (s *Stream) setIO(mixID, id, memID, offset, size uint32) error {
 	var ios [][]byte
+	var blk *memBlock
 	if memID != invalidID {
 		need := uint32(8)
 		if id == ioAsync {
@@ -647,8 +723,9 @@ func (s *Stream) setIO(mixID, id, memID, offset, size uint32) error {
 		if size < need {
 			return fmt.Errorf("io area of %d bytes", size)
 		}
-		area, err := s.c.mapMem(memID, offset, size)
-		if err != nil {
+		var area []byte
+		var err error
+		if area, blk, err = s.c.mapMem(memID, offset, size); err != nil {
 			return err
 		}
 		ios = [][]byte{area[:8]}
@@ -658,21 +735,15 @@ func (s *Stream) setIO(mixID, id, memID, offset, size uint32) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := s.mixes[mixID]
-	if m == nil {
-		m = &mix{}
-		s.mixes[mixID] = m
-	}
-	m.ios = ios
+	m := s.mix(mixID)
+	s.c.unref(m.ioBlk)
+	m.ios, m.ioBlk = ios, blk
 	return nil
 }
 
 func (s *Stream) setActivation(node uint32, fd int, memID, offset, size uint32) error {
 	s.mu.Lock()
-	if t := s.targets[node]; t != nil {
-		unix.Close(t.fd)
-		delete(s.targets, node)
-	}
+	s.dropTarget(node)
 	s.mu.Unlock()
 	if memID == invalidID {
 		if fd >= 0 {
@@ -680,7 +751,7 @@ func (s *Stream) setActivation(node uint32, fd int, memID, offset, size uint32) 
 		}
 		return nil
 	}
-	act, err := s.c.mapMem(memID, offset, size)
+	act, blk, err := s.c.mapMem(memID, offset, size)
 	if err == nil && len(act) < actMinSize {
 		err = fmt.Errorf("activation record of %d bytes", len(act))
 	}
@@ -688,32 +759,56 @@ func (s *Stream) setActivation(node uint32, fd int, memID, offset, size uint32) 
 		err = errors.New("activation without an eventfd")
 	}
 	if err != nil {
+		s.c.unref(blk)
 		if fd >= 0 {
 			unix.Close(fd)
 		}
 		return err
 	}
 	s.mu.Lock()
-	s.targets[node] = &target{fd: fd, act: act}
+	s.targets[node] = &target{fd: fd, act: act, blk: blk}
 	s.mu.Unlock()
 	return nil
 }
 
+// mix returns the link with id, adding it if new. Callers hold s.mu.
+func (s *Stream) mix(id uint32) *mix {
+	m := s.mixes[id]
+	if m == nil {
+		m = &mix{}
+		s.mixes[id] = m
+	}
+	return m
+}
+
 // dropMix forgets a link to our port. Callers hold s.mu.
 func (s *Stream) dropMix(id uint32) {
-	if m := s.mixes[id]; m != nil && s.held != nil && s.held.mix == m {
-		s.held = nil
+	m := s.mixes[id]
+	if m == nil {
+		return
 	}
+	s.clearBuffers(m)
+	s.c.unref(m.ioBlk)
 	delete(s.mixes, id)
 }
 
-// clearBuffers forgets every buffer, as a new format invalidates them.
-// Callers hold s.mu.
-func (s *Stream) clearBuffers() {
-	for _, m := range s.mixes {
-		m.buffers = nil
+// clearBuffers forgets a link's buffers, as a new format or buffer set
+// invalidates them. Callers hold s.mu.
+func (s *Stream) clearBuffers(m *mix) {
+	if s.held != nil && s.held.mix == m {
+		s.held = nil
 	}
-	s.held = nil
+	s.c.unref(m.bufBlks...)
+	m.buffers, m.bufBlks = nil, nil
+}
+
+// dropTarget stops signaling a node. Callers hold s.mu.
+func (s *Stream) dropTarget(id uint32) {
+	if t := s.targets[id]; t != nil {
+		unix.Close(t.fd)
+		s.c.unref(t.blk)
+		delete(s.targets, id)
+	}
 }
 
 // run answers the graph's wakeups until the eventfd is closed.
@@ -777,10 +872,8 @@ func (s *Stream) take(m *mix, io []byte) {
 // newFrame makes ref the held frame and wakes Frame. Callers hold s.mu.
 func (s *Stream) newFrame(ref *frameRef) {
 	s.held = ref
-	s.frames++
 	s.last = time.Now()
-	close(s.fresh)
-	s.fresh = make(chan struct{})
+	s.signal()
 }
 
 // hasFrame reports whether the producer filled the buffer; Mutter queues

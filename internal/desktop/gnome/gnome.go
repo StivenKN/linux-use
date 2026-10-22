@@ -69,6 +69,7 @@ type Backend struct {
 	tokens   int           // portal request token counter
 	pw       *pw.Conn      // PipeWire connection, dialed on first capture
 	pwErr    error         // why the last PipeWire capture failed, if it did
+	pwOff    bool          // PipeWire never delivered a frame: use the portal
 	input    time.Time     // when we last sent input, so captures can show its effect
 }
 

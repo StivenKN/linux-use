@@ -17,6 +17,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/StivenKN/linux-use/internal/desktop"
+	"github.com/StivenKN/linux-use/internal/pw"
 )
 
 // shot is a portal Screenshot request awaiting its Response signal.
@@ -34,8 +35,11 @@ type shotResult struct {
 // Capture reads the display's ScreenCast stream over PipeWire, falling back
 // to the screenshot portal if that fails.
 func (b *Backend) Capture(ctx context.Context, d desktop.Display) (*image.RGBA, error) {
+	if b.pwOff {
+		return b.capturePortal(ctx, d)
+	}
 	img, err := b.capturePipeWire(ctx, d)
-	if err != nil && ctx.Err() == nil {
+	if err != nil && ctx.Err() == nil && !errors.Is(err, pw.ErrNoFrame) {
 		// GNOME may have ended the session under us (the user stopped
 		// screen sharing) before its Closed signal arrived: retry once on a
 		// fresh one.
@@ -55,6 +59,9 @@ func (b *Backend) Capture(ctx context.Context, d desktop.Display) (*image.RGBA, 
 		fmt.Fprintf(os.Stderr, "linux-use: PipeWire capture failed, using the screenshot portal: %v\n", err)
 	}
 	b.pwErr = err
+	// A screen cast that never sends a frame won't start later (older
+	// PipeWire releases): stop paying its timeout on every capture.
+	b.pwOff = errors.Is(err, pw.ErrNoFrame)
 	return b.capturePortal(ctx, d)
 }
 

@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func put32(b []byte, off int, v uint32) { le.PutUint32(b[off:], v) }
@@ -32,7 +34,7 @@ func TestProcessHoldsNewestFrameAndSignalsDriver(t *testing.T) {
 		act:     act,
 		mixes:   map[uint32]*mix{0: m},
 		targets: map[uint32]*target{9: {fd: int(w.Fd()), act: driver}},
-		fresh:   make(chan struct{}),
+		changed: make(chan struct{}),
 	}
 
 	cycle := func(buffer uint32) {
@@ -65,24 +67,44 @@ func TestProcessHoldsNewestFrameAndSignalsDriver(t *testing.T) {
 	}
 
 	put32(act, actStatus, actFinished) // a wakeup that isn't ours to run
+	put32(io, 0, statusHaveData)
+	put32(io, 4, 1)
 	s.process()
-	if s.frames != 2 {
-		t.Errorf("frames = %d after a stray wakeup", s.frames)
+	if s.held.id != 0 || get32(io, 0) != statusHaveData {
+		t.Errorf("a stray wakeup took buffer %d", s.held.id)
 	}
 
-	s.format = videoFormat{format: videoBGRx, width: 2, height: 1}
-	img, err := s.copyFrame(m.buffers[0])
+	pix, err := copyPlane(m.buffers[0], videoFormat{format: videoBGRx, width: 2, height: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []byte{3, 2, 1, 255, 0, 0, 0, 255}; string(img.Pix) != string(want) {
-		t.Errorf("BGRx converted to %v, want %v", img.Pix, want)
+	toRGBA(pix, videoBGRx)
+	if want := []byte{3, 2, 1, 255, 0, 0, 0, 255}; string(pix) != string(want) {
+		t.Errorf("BGRx converted to %v, want %v", pix, want)
+	}
+}
+
+func TestRemovedMemoryOutlivesItsUsers(t *testing.T) {
+	data, err := unix.Mmap(-1, 0, 4096, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_ANON|unix.MAP_PRIVATE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Conn{mem: map[uint32]*memBlock{}}
+	m := &memBlock{fd: -1, data: data, refs: 1}
+	c.mem[7] = m
+	c.removeMem(7) // the server frees it before replacing our buffers
+	if m.data == nil {
+		t.Fatal("block freed while a stream still uses it")
+	}
+	c.unref(m)
+	if m.data != nil {
+		t.Error("block not freed after its last user let go")
 	}
 }
 
 func TestFrameSettles(t *testing.T) {
 	m := &mix{buffers: []buffer{testBuffer(1, 2, 3, 0), testBuffer(4, 5, 6, 0)}}
-	s := &Stream{fresh: make(chan struct{}), format: videoFormat{format: videoBGRx, width: 2, height: 1, interval: 10 * time.Millisecond}}
+	s := &Stream{changed: make(chan struct{}), format: videoFormat{format: videoBGRx, width: 2, height: 1, interval: 10 * time.Millisecond}}
 	s.newFrame(&frameRef{mix: m, id: 0})
 	s.last = time.Now().Add(-time.Second)
 	ctx := context.Background()

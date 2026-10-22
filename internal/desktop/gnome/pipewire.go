@@ -25,6 +25,8 @@ func (b *Backend) capturePipeWire(ctx context.Context, d desktop.Display) (*imag
 	if i < 0 {
 		return nil, fmt.Errorf("display %q is not being recorded", d.Name)
 	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	s, err := b.capture(ctx, r, i)
 	if err != nil {
 		return nil, err
@@ -53,8 +55,6 @@ func (b *Backend) capture(ctx context.Context, r *remote, i int) (*pw.Stream, er
 	if s != nil {
 		s.Close()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	node, err := b.node(ctx, r.streams[i])
 	if err != nil {
 		return nil, err

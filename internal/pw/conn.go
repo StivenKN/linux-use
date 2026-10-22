@@ -67,12 +67,17 @@ func (m *message) fd(i int) int {
 }
 
 // memBlock is a block of shared memory announced by the server. It is
-// mapped whole on first use and unmapped when the server removes it.
+// mapped whole on first use. The server may remove a block before it tells
+// us to stop using it (it frees old buffers before sending new ones), so
+// each mapMem holds a reference and the block is unmapped only once it is
+// both removed and unreferenced, as libpipewire does.
 type memBlock struct {
-	fd    int
-	typ   uint32
-	flags uint32
-	data  []byte
+	fd      int
+	typ     uint32
+	flags   uint32
+	data    []byte
+	refs    int
+	removed bool
 }
 
 const memWritable = 1 << 1 // PW_MEMBLOCK_FLAG_WRITABLE
@@ -169,7 +174,7 @@ func (c *Conn) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for id, m := range c.mem {
-		m.release()
+		m.free()
 		delete(c.mem, id)
 	}
 	for _, fd := range c.fdq {
@@ -277,41 +282,22 @@ func (c *Conn) Sync(ctx context.Context) error {
 	}
 }
 
-// globalID waits for the server to tell us the global id of a proxy's object.
-func (c *Conn) globalID(ctx context.Context, id uint32) (uint32, error) {
-	for {
-		c.mu.Lock()
-		g, ok := c.bound[id]
-		sig := c.boundSig
-		c.mu.Unlock()
-		if ok {
-			return g, nil
-		}
-		select {
-		case <-sig:
-		case <-c.closed:
-			return 0, c.err
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		}
-	}
-}
-
-// mapMem returns size bytes at offset in shared memory block id.
-func (c *Conn) mapMem(id, offset, size uint32) ([]byte, error) {
+// mapMem returns size bytes at offset in shared memory block id, and the
+// block, which stays mapped until the caller passes it to unref.
+func (c *Conn) mapMem(id, offset, size uint32) ([]byte, *memBlock, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	m := c.mem[id]
 	if m == nil {
-		return nil, fmt.Errorf("PipeWire: unknown memory block %d", id)
+		return nil, nil, fmt.Errorf("PipeWire: unknown memory block %d", id)
 	}
 	if m.data == nil {
 		if m.typ != dataMemFd {
-			return nil, fmt.Errorf("PipeWire: memory block %d has type %d, not a memfd", id, m.typ)
+			return nil, nil, fmt.Errorf("PipeWire: memory block %d has type %d, not a memfd", id, m.typ)
 		}
 		var st unix.Stat_t
 		if err := unix.Fstat(m.fd, &st); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		prot := unix.PROT_READ
 		if m.flags&memWritable != 0 {
@@ -319,23 +305,42 @@ func (c *Conn) mapMem(id, offset, size uint32) ([]byte, error) {
 		}
 		data, err := unix.Mmap(m.fd, 0, int(st.Size), prot, unix.MAP_SHARED)
 		if err != nil {
-			return nil, fmt.Errorf("PipeWire: mapping memory block %d: %w", id, err)
+			return nil, nil, fmt.Errorf("PipeWire: mapping memory block %d: %w", id, err)
 		}
 		m.data = data
 	}
 	end := uint64(offset) + uint64(size)
 	if end > uint64(len(m.data)) {
-		return nil, fmt.Errorf("PipeWire: range %d+%d is outside memory block %d", offset, size, id)
+		return nil, nil, fmt.Errorf("PipeWire: range %d+%d is outside memory block %d", offset, size, id)
 	}
-	return m.data[offset:end:end], nil
+	m.refs++
+	return m.data[offset:end:end], m, nil
 }
 
-func (m *memBlock) release() {
+// unref drops references taken by mapMem; nil blocks are ignored.
+func (c *Conn) unref(blocks ...*memBlock) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, m := range blocks {
+		if m == nil {
+			continue
+		}
+		m.refs--
+		if m.refs <= 0 && m.removed {
+			m.free()
+		}
+	}
+}
+
+func (m *memBlock) free() {
 	if m.data != nil {
 		unix.Munmap(m.data)
 		m.data = nil
 	}
-	unix.Close(m.fd)
+	if m.fd >= 0 {
+		unix.Close(m.fd)
+		m.fd = -1
+	}
 }
 
 func (c *Conn) readLoop() {
@@ -458,18 +463,27 @@ func (c *Conn) coreEvent(op uint8, f *fields, m *message) {
 			return
 		}
 		c.mu.Lock()
-		if old := c.mem[id]; old != nil {
-			old.release()
-		}
+		c.removeMem(id)
 		c.mem[id] = &memBlock{fd: fd, typ: typ, flags: flags}
 		c.mu.Unlock()
 	case coreEventRemoveMem:
 		id := f.Uint()
 		c.mu.Lock()
-		if m := c.mem[id]; m != nil {
-			m.release()
-			delete(c.mem, id)
-		}
+		c.removeMem(id)
 		c.mu.Unlock()
+	}
+}
+
+// removeMem forgets block id; it is freed once nothing references it.
+// Callers hold c.mu.
+func (c *Conn) removeMem(id uint32) {
+	m := c.mem[id]
+	if m == nil {
+		return
+	}
+	delete(c.mem, id)
+	m.removed = true
+	if m.refs <= 0 {
+		m.free()
 	}
 }
