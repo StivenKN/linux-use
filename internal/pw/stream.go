@@ -264,9 +264,9 @@ func (s *Stream) fail(err error) {
 
 // How Frame decides the screen has settled after input.
 const (
-	settleQuiet = 100 * time.Millisecond // no new frame for this long
-	settleIdle  = 200 * time.Millisecond // input that changed nothing by then never will
-	settleLimit = 400 * time.Millisecond // a screen still changing is captured as is
+	settleQuiet = 150 * time.Millisecond // no new frame for this long
+	settleIdle  = 300 * time.Millisecond // input that changed nothing by then never will
+	settleLimit = 500 * time.Millisecond // a screen still changing is captured as is
 )
 
 // Frame returns the newest frame as RGBA once the screen has settled after
@@ -768,14 +768,19 @@ func (s *Stream) take(m *mix, io []byte) {
 		if s.held != nil && s.held.mix == m {
 			back = s.held.id
 		}
-		s.held = &frameRef{mix: m, id: id}
-		s.frames++
-		s.last = time.Now()
-		close(s.fresh)
-		s.fresh = make(chan struct{})
+		s.newFrame(&frameRef{mix: m, id: id})
 	}
 	atomic.StoreUint32(word(io, 4), back)
 	atomic.StoreUint32(word(io, 0), statusNeedData)
+}
+
+// newFrame makes ref the held frame and wakes Frame. Callers hold s.mu.
+func (s *Stream) newFrame(ref *frameRef) {
+	s.held = ref
+	s.frames++
+	s.last = time.Now()
+	close(s.fresh)
+	s.fresh = make(chan struct{})
 }
 
 // hasFrame reports whether the producer filled the buffer; Mutter queues

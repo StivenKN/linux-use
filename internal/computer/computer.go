@@ -92,9 +92,15 @@ func (c *Computer) ensure(ctx context.Context) error {
 	return nil
 }
 
+// opTimeout bounds one operation, so a hung compositor fails the tool call
+// instead of blocking Claude forever.
+const opTimeout = 2 * time.Minute // above hold_key's 100 s
+
 // do runs f with a live backend, reconnecting once if the session went away
 // (e.g. the agent desktop was restarted).
 func (c *Computer) do(ctx context.Context, f func(b desktop.Backend) error) error {
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.ensure(ctx); err != nil {
