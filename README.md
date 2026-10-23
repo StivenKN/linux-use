@@ -102,19 +102,19 @@ The binary speaks every protocol itself (Wayland, X11, D-Bus and PipeWire), so t
 
 ### Tested versions
 
-Everything below ran on one machine: Ubuntu 26.04.1 LTS, kernel 7.0, x86_64, Intel Iris Xe graphics. Every desktop ran headless, on virtual monitors, with no physical display attached. The versions are Ubuntu's packages.
+Everything below ran on one machine: Ubuntu 26.04.1 LTS, kernel 7.0, x86_64, Intel Iris Xe graphics. Every desktop ran headless, on virtual monitors, with no physical display attached. The versions are Ubuntu's packages, except Firefox, which is the snap.
 
 | Desktop | Exact versions | How it was tested |
 | --- | --- | --- |
 | **GNOME (Wayland)** | GNOME Shell 50.1, Mutter 50.1, PipeWire 1.6.2, WirePlumber 0.5.13, xdg-desktop-portal 1.21.1, xdg-desktop-portal-gnome 50.0 | Real Claude Code sessions (the demo above); two monitors at scales 1 and 2; the linux-use extension |
-| **KDE Plasma (Wayland)** | KWin 6.6.6, KDE Frameworks 6.24.0, Qt 6.10.2 | linux-use's tools against KWin with Plasma's app menu, not a full Plasma session; two monitors, one at 1.5× |
+| **KDE Plasma (Wayland)** | KWin 6.6.6, KDE Frameworks 6.24.0, Qt 6.10.2 | linux-use's tools against KWin with Plasma's app menu, not a full Plasma session; a second monitor, and a monitor at 1.5× |
 | **wlroots** | labwc 0.9.3 on wlroots 0.19.2 | As the agent desktop, below |
 | **X11** | Xvfb 21.1.22, openbox 3.6.1 | linux-use's tools with Firefox and xterm; two monitors set with `xrandr --setmonitor` |
-| **Agent desktop** | labwc 0.9.3, wayvnc 0.9.1, waybar 0.15.0, swaybg 1.2.1, foot 1.25.0, Xwayland 24.1.10, Firefox 158 | Real Claude Code sessions over SSH (the server demo above) |
+| **Agent desktop** | labwc 0.9.3, wayvnc 0.9.1, waybar 0.15.0, swaybg 1.2.1, foot 1.25.0, Xwayland 24.1.10, Firefox 158 (snap) | Real Claude Code sessions over SSH (the server demo above) |
 
 linux-use's PipeWire client was also tested without GNOME against PipeWire 1.0.5 (Ubuntu 24.04).
 
-**Not tested yet:** sway, Hyprland, river, Wayfire, niri, COSMIC, GNOME 45 to 49, Plasma before 6.6, Xorg on real hardware, physical monitors, NVIDIA GPUs and arm64. They implement the same protocols, so they should work, but nobody has checked. If yours doesn't work, please [open an issue](https://github.com/StivenKN/linux-use/issues) with the output of `/linux-use:setup`, your distribution, and your compositor's version (for example `gnome-shell --version`, `kwin_wayland --version`, `sway --version` or `Hyprland --version`).
+**Not tested yet:** sway, Hyprland, river, Wayfire, niri, COSMIC, GNOME 49 and earlier, Plasma before 6.6, X11 desktops other than openbox (Xfce, Cinnamon, MATE, i3, GNOME/KDE on Xorg), Xorg on real hardware, physical monitors, NVIDIA GPUs and arm64. They implement the same protocols, so they should work, but nobody has checked. If yours doesn't work, please [open an issue](https://github.com/StivenKN/linux-use/issues) with the output of `/linux-use:setup`, your distribution, and your compositor's version (for example `gnome-shell --version`, `kwin_wayland --version`, `sway --version` or `Hyprland --version`).
 
 ## How it works
 
